@@ -29,11 +29,11 @@ fi
 cp -a "${REPO_DIR}/node_modules" "${APP_DIR}/"
 
 echo "== Staging Debian metadata"
-cp -a "${TEMPLATE_DIR}/etc/." "${STAGE}/etc/"
-cp -a "${TEMPLATE_DIR}/lib/." "${STAGE}/lib/"
-cp -a "${TEMPLATE_DIR}/usr/." "${STAGE}/usr/"
+cp -r "${TEMPLATE_DIR}/etc/." "${STAGE}/etc/"
+cp -r "${TEMPLATE_DIR}/lib/." "${STAGE}/lib/"
+cp -r "${TEMPLATE_DIR}/usr/." "${STAGE}/usr/"
 mkdir -p "${STAGE}/DEBIAN"
-cp -a "${TEMPLATE_DIR}/DEBIAN/." "${STAGE}/DEBIAN/"
+cp -r "${TEMPLATE_DIR}/DEBIAN/." "${STAGE}/DEBIAN/"
 chmod 0755 "${STAGE}/DEBIAN/postinst" "${STAGE}/DEBIAN/prerm" "${STAGE}/DEBIAN/postrm"
 chmod 0644 "${STAGE}/DEBIAN/control" "${STAGE}/DEBIAN/conffiles"
 
@@ -46,8 +46,9 @@ sed -i \
   -e "s/@VERSION@/${VERSION}/g" \
   -e "s/@INSTALLED_SIZE@/${INSTALLED_SIZE}/g" \
   "${STAGE}/DEBIAN/control"
-
-find "${STAGE}" -type d -exec chmod 0755 {} +
+chmod 0755 "${STAGE}/DEBIAN"
+find "${STAGE}" -type d -exec chmod 0755 {} \;
+find "${STAGE}" -type f -not -path "${STAGE}/DEBIAN/*" -exec chmod 0644 {} \;
 
 echo "== Building ${DEB_NAME}"
 mkdir -p "${OUT_DIR}"
