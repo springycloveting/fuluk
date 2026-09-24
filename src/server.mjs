@@ -506,7 +506,7 @@ async function handleNaturalLanguage(req, res, context) {
   if (command.type === "output") {
     const session = requireCommandSession(command, body, context);
     const text = await tmux.capture(session, command.lines);
-    store.saveOutput(session.id, command.lines, text);
+    store.saveOutput(session.id, command.lines, text, { touch: false });
     sendJson(res, 200, { command, session: summarizeSession(session), output: text });
     return;
   }
@@ -514,7 +514,7 @@ async function handleNaturalLanguage(req, res, context) {
   if (command.type === "switch") {
     const session = requireCommandSession(command, body, context);
     const text = await tmux.capture(session, 120);
-    store.saveOutput(session.id, 120, text);
+    store.saveOutput(session.id, 120, text, { touch: false });
     sendJson(res, 200, { command, session: summarizeSession(session), output: text });
     return;
   }
@@ -992,9 +992,23 @@ async function annotateSessionsTaskState(sessions, context) {
       await captureCliSessionId(session.id, context, { output });
     }
     const taskState = detectTaskState(session, output, snapshot);
-    annotated.push({ ...session, taskState, phase: sessionPhase({ ...session, taskState }) });
+    const finalTaskState = applyCompletedStickiness(taskState, session, context);
+    annotated.push({
+      ...session,
+      taskState: finalTaskState,
+      phase: sessionPhase({ ...session, taskState: finalTaskState })
+    });
   }
   return annotated;
+}
+
+function applyCompletedStickiness(taskState, session, context) {
+  if (taskState !== "in_progress") return taskState;
+  const previous = context.sessionTaskStates?.get(session.id);
+  if (previous?.state !== "completed") return taskState;
+  const lastSentAt = Date.parse(session.updatedAt);
+  const hasNewInput = Number.isFinite(lastSentAt) && lastSentAt > previous.at;
+  return hasNewInput ? taskState : "completed";
 }
 
 function detectTaskState(session, output, snapshot) {
@@ -1015,8 +1029,11 @@ async function dispatchSessionTaskTransitions(sessions, context) {
   if (!context.sessionTaskStates) context.sessionTaskStates = new Map();
   const notifications = [];
   for (const session of sessions) {
-    const previousTaskState = context.sessionTaskStates.get(session.id);
-    context.sessionTaskStates.set(session.id, session.taskState);
+    const previousEntry = context.sessionTaskStates.get(session.id);
+    const previousTaskState = previousEntry?.state;
+    const enteredAt =
+      previousEntry && previousEntry.state === session.taskState ? previousEntry.at : Date.now();
+    context.sessionTaskStates.set(session.id, { state: session.taskState, at: enteredAt });
     if (!shouldNotifyTaskTransition(previousTaskState, session.taskState)) continue;
     notifications.push({
       type: "session_task_state_changed",

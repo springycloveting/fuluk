@@ -228,3 +228,28 @@ test("SessionStore migrate adds cli_session_id column to an existing db", () => 
   );
   reopened.close();
 });
+test("saveOutput ignores re-captures of an unchanged screen with different line counts", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-gateway-"));
+  const store = new SessionStore(path.join(dir, "test.sqlite"));
+  const session = store.create({ kind: "runtime", cwd: dir, name: "idle-s" }, "/bin/bash", []);
+
+  const bottom = ["a", "b", "c", "prompt> "];
+  const screen80 = bottom.join("\n");
+  const screen120 = Array(116).fill("").concat(bottom).join("\n");
+
+  const first = store.saveOutput(session.id, 80, screen80, { touch: false });
+  const same = store.saveOutput(session.id, 80, screen80, { touch: false });
+  assert.equal(same.id, first.id);
+  assert.equal(same.capturedAt, first.capturedAt);
+  const moreLines = store.saveOutput(session.id, 120, screen120, { touch: false });
+  assert.equal(moreLines.id, first.id);
+
+  const changed = store.saveOutput(
+    session.id,
+    80,
+    ["a", "b", "c", "prompt> ", "new output"].join("\n"),
+    { touch: false }
+  );
+  assert.notEqual(changed.id, first.id);
+  store.close();
+});

@@ -3,6 +3,19 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { newId, nowIso, sanitizeTmuxName } from "./utils.mjs";
 
+function isSameScreen(previousText, nextText) {
+  if (previousText === nextText) return true;
+  if (!previousText || !nextText) return false;
+  const previousLines = previousText.split("\n");
+  const nextLines = nextText.split("\n");
+  const overlap = Math.min(previousLines.length, nextLines.length);
+  if (overlap === 0) return false;
+  return (
+    previousLines.slice(-overlap).join("\n") ===
+    nextLines.slice(-overlap).join("\n")
+  );
+}
+
 export class SessionStore {
   constructor(databasePath) {
     fs.mkdirSync(path.dirname(databasePath), { recursive: true });
@@ -121,7 +134,7 @@ export class SessionStore {
 
   saveOutput(sessionId, lines, text, options = {}) {
     const latest = this.latestOutputSnapshot(sessionId);
-    if (latest && latest.text === text) {
+    if (latest && isSameScreen(latest.text, text)) {
       if (options.touch !== false) this.touch(sessionId);
       return latest;
     }
