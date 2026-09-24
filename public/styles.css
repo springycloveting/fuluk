@@ -150,6 +150,19 @@ input::placeholder {
   white-space: nowrap;
 }
 
+.completed-alert {
+  background: color-mix(in srgb, var(--success) 18%, var(--panel-2));
+  border-color: var(--success);
+  color: var(--text-strong);
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .all-yes-btn {
   align-items: center;
   border: 1px solid var(--border-strong);
@@ -354,6 +367,29 @@ h2 {
   min-width: 0;
 }
 
+.sessions-toggle {
+  padding: 0 8px;
+}
+
+.sessions-toggle .chevron {
+  display: block;
+  transition: transform 140ms ease;
+}
+
+.sessions-toggle[aria-expanded="true"] .chevron {
+  transform: rotate(180deg);
+}
+
+.assistant-toggle {
+  flex: 0 0 auto;
+  padding: 0 10px;
+}
+
+.assistant-toggle.active {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
 .sessions-panel {
   background: var(--panel);
   border-left: 1px solid var(--border-strong);
@@ -392,9 +428,9 @@ h2 {
   gap: 8px;
 }
 
-.sessions-panel .panel-head h2 {
-  margin: 0;
-  white-space: nowrap;
+.panel-collapse {
+  flex: 0 0 auto;
+  padding: 0 8px;
 }
 
 .sessions-panel .panel-head .actions {
@@ -484,20 +520,41 @@ h2 {
   white-space: nowrap;
 }
 
-.session-delete {
+.session-action {
   background: transparent;
-  border-color: var(--danger);
-  color: var(--danger);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--muted);
   font-size: 11px;
-  min-height: 20px;
+  line-height: 1;
+  min-height: 22px;
   opacity: 0.45;
   padding: 0 7px;
-  transition: opacity 100ms ease;
+  transition: opacity 100ms ease, color 100ms ease, border-color 100ms ease;
 }
 
-.session-item:hover .session-delete,
-.session-item:focus-within .session-delete,
-.session-item.active .session-delete {
+.session-action:hover {
+  opacity: 1;
+}
+
+.session-action.session-delete {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.session-action.session-restart:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.session-action.session-stop:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.session-item:hover .session-action,
+.session-item:focus-within .session-action,
+.session-item.active .session-action {
   opacity: 1;
 }
 
@@ -795,6 +852,10 @@ button.danger {
     max-width: none;
     right: 8px;
     width: auto;
+  }
+
+  .session-action {
+    opacity: 1;
   }
 }
 

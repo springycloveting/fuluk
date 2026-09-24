@@ -12,18 +12,18 @@
     <main class="shell">
       <header class="topbar">
         <div class="identity">
-          <button id="open-sessions" class="ghost" type="button">会话</button>
           <h1 id="selected-title">未选择会话</h1>
         </div>
         <div class="actions">
           <button id="confirm-alert" class="confirm-alert" type="button" hidden>需要确认</button>
+          <button id="completed-alert" class="completed-alert" type="button" hidden>已完成</button>
           <button id="all-yes" class="all-yes-btn" type="button" data-state="off">All Yes</button>
           <button id="open-history" class="ghost" type="button">历史</button>
           <button id="open-create" class="ghost" type="button">新建</button>
-          <button id="open-run" class="ghost" type="button">助手</button>
-          <button id="restart" class="ghost" type="button">重启</button>
-          <button id="stop" class="ghost" type="button">停止</button>
           <button id="open-config" class="ghost" type="button">配置</button>
+          <button id="open-sessions" class="ghost sessions-toggle" type="button" aria-expanded="false" aria-controls="sessions-panel" title="会话">
+            <svg class="chevron" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
         </div>
       </header>
 
@@ -38,18 +38,23 @@
         </div>
         <div class="input-row">
           <input id="input" placeholder="发送到当前会话" />
+          <button id="open-run" class="ghost assistant-toggle" type="button" title="助手">
+            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 1.8l1.7 3.8 4 .4-3 2.7.9 4-3.6-2.1L4.4 13l.9-4-3-2.7 4-.4Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+          </button>
           <button id="send" type="button">发送</button>
         </div>
       </section>
 
       <aside id="sessions-panel" class="sessions-panel" aria-hidden="true">
         <div class="panel-head">
-          <h2 data-i18n="sessionsTitle">会话</h2>
+          <button id="close-sessions" class="ghost panel-collapse" type="button" title="关闭">
+            <svg class="chevron" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
           <div class="actions">
             <button id="refresh" class="ghost" type="button">刷新</button>
-            <button id="close-sessions" class="ghost" type="button">关闭</button>
             <select id="phase-filter" title="状态">
-              <option value="all">全部状态</option>
+              <option value="open">未关闭</option>
+              <option value="all">全部会话</option>
               <option value="active">进行中</option>
               <option value="stopped">已停止</option>
               <option value="closed">已关闭</option>

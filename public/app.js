@@ -22,13 +22,18 @@ const state = {
   allYesMode: localStorage.getItem("sessionGatewayAllYesMode") || "off",
   autoYesSignatures: new Map(),
   notifications: {},
+  taskStates: new Map(),
+  completedAlerts: [],
   sessionAgentSettings: {},
   pendingDeleteSession: null,
   assistantMessages: [],
   customQuickKeys: loadCustomQuickKeys(),
   language: localStorage.getItem("sessionGatewayLanguage") || "zh",
   theme: localStorage.getItem("sessionGatewayTheme") || "dark",
-  phaseFilter: localStorage.getItem("sessionGatewayPhaseFilter") || "all",
+  phaseFilter: (() => {
+    const stored = localStorage.getItem("sessionGatewayPhaseFilter");
+    return stored === "all" ? "open" : stored || "open";
+  })(),
   sessionSearch: ""
 };
 
@@ -60,7 +65,6 @@ const translations = {
     darkTheme: "黑暗",
     lightTheme: "明亮",
     configTitle: "配置",
-    sessionsTitle: "会话",
     createTitle: "新建会话",
     commandTitle: "助手",
     deleteTitle: "删除会话",
@@ -86,6 +90,7 @@ const translations = {
     phaseStopped: "已停止",
     phaseClosed: "已关闭",
     confirmAlert: "需要确认：{name}",
+    completedAlert: "已完成：{name}",
     sendPlaceholder: "发送到当前会话",
     namePlaceholder: "会话名，例如 codex-app",
     cwdPlaceholder: "工作目录，留空则使用默认会话目录",
@@ -117,7 +122,6 @@ const translations = {
     darkTheme: "Dark",
     lightTheme: "Light",
     configTitle: "Config",
-    sessionsTitle: "Sessions",
     createTitle: "Create Session",
     commandTitle: "Assistant",
     deleteTitle: "Delete Session",
@@ -143,6 +147,7 @@ const translations = {
     phaseStopped: "Stopped",
     phaseClosed: "Closed",
     confirmAlert: "Needs confirmation: {name}",
+    completedAlert: "Completed: {name}",
     sendPlaceholder: "Send text to selected session",
     namePlaceholder: "Session name, e.g. codex-app",
     cwdPlaceholder: "Working directory; leave blank for the default session folder",
@@ -154,8 +159,8 @@ const translations = {
 const els = {
   openSessions: document.querySelector("#open-sessions"),
   confirmAlert: document.querySelector("#confirm-alert"),
+  completedAlert: document.querySelector("#completed-alert"),
   closeSessions: document.querySelector("#close-sessions"),
-  sessionsTitle: document.querySelector("[data-i18n='sessionsTitle']"),
   sessionsPanel: document.querySelector("#sessions-panel"),
   openConfig: document.querySelector("#open-config"),
   configDialog: document.querySelector("#config-dialog"),
@@ -207,9 +212,7 @@ const els = {
   xtermOutput: document.querySelector("#xterm-output"),
   output: document.querySelector("#output"),
   input: document.querySelector("#input"),
-  send: document.querySelector("#send"),
-  restart: document.querySelector("#restart"),
-  stop: document.querySelector("#stop")
+  send: document.querySelector("#send")
 };
 
 els.token.value = localStorage.getItem("sessionGatewayToken") || "";
@@ -250,14 +253,17 @@ els.theme.addEventListener("change", () => {
   applyTheme();
 });
 
-els.openSessions.addEventListener("click", () => {
-  els.sessionsPanel.classList.add("open");
-  els.sessionsPanel.setAttribute("aria-hidden", "false");
-  refreshSessions();
-});
+els.openSessions.addEventListener("click", toggleSessionsPanel);
 els.confirmAlert.addEventListener("click", async () => {
   const session = firstSessionNeedingConfirmation();
   if (session) await selectSession(session);
+});
+els.completedAlert.addEventListener("click", async () => {
+  const session = firstCompletedAlertSession();
+  if (!session) return;
+  state.completedAlerts.shift();
+  await selectSession(session);
+  renderCompletedAlert();
 });
 els.closeSessions.addEventListener("click", closeSessionsPanel);
 els.openConfig.addEventListener("click", async () => {
@@ -337,8 +343,6 @@ els.createForm.addEventListener("submit", (event) => {
   createSession();
 });
 els.send.addEventListener("click", sendInput);
-els.restart.addEventListener("click", restartSession);
-els.stop.addEventListener("click", stopSession);
 els.runForm.addEventListener("submit", (event) => {
   event.preventDefault();
   runNaturalCommand();
@@ -523,6 +527,7 @@ async function refreshSessions() {
   try {
     const data = await api("/api/sessions");
     state.sessions = data.sessions;
+    recordTaskTransitions(state.sessions);
     if (selectionVersion !== state.selectionVersion) return;
     if (state.selectedSessionId || state.selected) {
       const selectedId = state.selectedSessionId || state.selected?.id;
@@ -1050,14 +1055,14 @@ async function sendQuickKeys(keys, options = {}) {
   }
 }
 
-async function restartSession() {
-  if (!state.selected) {
+async function restartSession(session = state.selected) {
+  if (!session) {
     showError(new Error(t("selectSession")));
     return;
   }
   try {
-    await api(`/api/sessions/${encodeURIComponent(state.selected.id)}/restart`, { method: "POST" });
-    clearOutputEtag(state.selected.id);
+    await api(`/api/sessions/${encodeURIComponent(session.id)}/restart`, { method: "POST" });
+    clearOutputEtag(session.id);
     await refreshSessions();
     resetOutputPolling(500);
   } catch (error) {
@@ -1065,15 +1070,15 @@ async function restartSession() {
   }
 }
 
-async function stopSession() {
-  if (!state.selected) {
+async function stopSession(session = state.selected) {
+  if (!session) {
     showError(new Error(t("selectSession")));
     return;
   }
   try {
-    await api(`/api/sessions/${encodeURIComponent(state.selected.id)}`, { method: "DELETE" });
-    clearOutputEtag(state.selected.id);
-    clearOutputPoll();
+    await api(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+    clearOutputEtag(session.id);
+    if (state.selected?.id === session.id) clearOutputPoll();
     await refreshSessions();
   } catch (error) {
     showError(error);
@@ -1241,10 +1246,12 @@ function phaseGroupLabel(phase) {
 }
 
 function renderSessionItem(session) {
-    const item = document.createElement("button");
+    const item = document.createElement("div");
     const phase = sessionPhase(session);
     item.className = `session-item phase-${phase}${state.selected?.id === session.id ? " active" : ""}`;
-    item.type = "button";
+    item.dataset.id = session.id;
+    item.setAttribute("role", "button");
+    item.setAttribute("tabindex", "0");
     const cwdLabel = shortCwd(session.cwd);
     const timeLabel = relativeTime(session.updatedAt ?? session.createdAt);
     item.innerHTML = `
@@ -1253,7 +1260,10 @@ function renderSessionItem(session) {
         <span class="session-controls">
           ${timeLabel ? `<span class="session-time" title="${escapeHtml(session.updatedAt ?? session.createdAt ?? "")}">${escapeHtml(timeLabel)}</span>` : ""}
           <span class="task-state ${phaseClass(session)}">${escapeHtml(phaseLabel(session))}</span>
-          <button class="session-delete" type="button" title="${escapeHtml(t("delete"))}">${escapeHtml(t("delete"))}</button>
+          ${phase === "active"
+            ? `<button class="session-action session-stop" type="button" title="${escapeHtml(t("stop"))}">${escapeHtml(t("stop"))}</button>`
+            : `<button class="session-action session-restart" type="button" title="${escapeHtml(t("restart"))}">${escapeHtml(t("restart"))}</button>`}
+          <button class="session-action session-delete" type="button" title="${escapeHtml(t("delete"))}">${escapeHtml(t("delete"))}</button>
         </span>
       </span>
       <span class="session-meta">
@@ -1261,7 +1271,25 @@ function renderSessionItem(session) {
         <span class="session-cwd" title="${escapeHtml(session.cwd)}">${escapeHtml(cwdLabel)}</span>
       </span>
     `;
-    item.addEventListener("click", () => selectSession(session));
+    item.addEventListener("click", (event) => {
+      if (event.target.closest(".session-action")) return;
+      selectSession(session);
+    });
+    item.addEventListener("keydown", (event) => {
+      if (event.target !== item) return;
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectSession(session);
+      }
+    });
+    item.querySelector(".session-stop")?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      stopSession(session);
+    });
+    item.querySelector(".session-restart")?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      restartSession(session);
+    });
     item.querySelector(".session-delete").addEventListener("click", (event) => {
       event.stopPropagation();
       openDeleteDialog(session);
@@ -1271,11 +1299,11 @@ function renderSessionItem(session) {
 
 function filteredSessions() {
   let sessions = state.sessions;
-  const phaseFilter = state.phaseFilter || "all";
-  if (phaseFilter !== "all") {
-    sessions = sessions.filter((session) => sessionPhase(session) === phaseFilter);
-  } else {
+  const phaseFilter = state.phaseFilter || "open";
+  if (phaseFilter === "open") {
     sessions = sessions.filter((session) => sessionPhase(session) !== "closed");
+  } else if (phaseFilter !== "all") {
+    sessions = sessions.filter((session) => sessionPhase(session) === phaseFilter);
   }
   const query = state.sessionSearch.trim().toLowerCase();
   if (query) {
@@ -1344,11 +1372,24 @@ function showTerminalView() {
 function closeSessionsPanel() {
   els.sessionsPanel.classList.remove("open");
   els.sessionsPanel.setAttribute("aria-hidden", "true");
+  els.openSessions.setAttribute("aria-expanded", "false");
+}
+
+function toggleSessionsPanel() {
+  if (els.sessionsPanel.classList.contains("open")) {
+    closeSessionsPanel();
+    return;
+  }
+  els.sessionsPanel.classList.add("open");
+  els.sessionsPanel.setAttribute("aria-hidden", "false");
+  els.openSessions.setAttribute("aria-expanded", "true");
+  refreshSessions();
 }
 
 function openAssistant() {
   els.runDialog.classList.add("open");
   els.runDialog.setAttribute("aria-hidden", "false");
+  els.openRun.classList.add("active");
   els.runDialog.querySelector(".assistant-subtitle").textContent = "web-pi";
   renderAssistantMessages();
 }
@@ -1356,6 +1397,7 @@ function openAssistant() {
 function closeAssistant() {
   els.runDialog.classList.remove("open");
   els.runDialog.setAttribute("aria-hidden", "true");
+  els.openRun.classList.remove("active");
   focusSessionInput();
 }
 
@@ -1473,15 +1515,12 @@ function applyLanguage() {
   document.querySelectorAll("[data-i18n]").forEach((element) => {
     element.textContent = text[element.dataset.i18n] ?? element.textContent;
   });
-  els.openSessions.textContent = text.sessions;
+  els.openSessions.title = text.sessions;
   renderTaskAlert();
   els.openCreate.textContent = text.create;
-  els.openRun.textContent = text.command;
-  els.restart.textContent = text.restart;
-  els.stop.textContent = text.stop;
+  els.openRun.title = text.command;
   els.openConfig.textContent = text.config;
-  els.sessionsTitle.textContent = text.sessionsTitle;
-  els.closeSessions.textContent = text.close;
+  els.closeSessions.title = text.close;
   els.refresh.textContent = text.refresh;
   els.send.textContent = text.send;
   els.create.textContent = text.create;
@@ -1707,11 +1746,43 @@ function renderTaskAlert() {
   if (!session) {
     els.confirmAlert.hidden = true;
     els.confirmAlert.textContent = "";
+  } else {
+    els.confirmAlert.hidden = false;
+    els.confirmAlert.textContent = t("confirmAlert").replace("{name}", session.name);
+    els.confirmAlert.title = session.name;
+  }
+  renderCompletedAlert();
+}
+
+function firstCompletedAlertSession() {
+  const id = state.completedAlerts[0];
+  return id ? state.sessions.find((session) => session.id === id) ?? null : null;
+}
+
+function renderCompletedAlert() {
+  const session = firstCompletedAlertSession();
+  if (!session) {
+    els.completedAlert.hidden = true;
+    els.completedAlert.textContent = "";
     return;
   }
-  els.confirmAlert.hidden = false;
-  els.confirmAlert.textContent = t("confirmAlert").replace("{name}", session.name);
-  els.confirmAlert.title = session.name;
+  els.completedAlert.hidden = false;
+  els.completedAlert.textContent = t("completedAlert").replace("{name}", session.name);
+  els.completedAlert.title = session.name;
+}
+
+function recordTaskTransitions(sessions) {
+  for (const session of sessions) {
+    const previous = state.taskStates.get(session.id);
+    if (
+      previous === "in_progress" &&
+      session.taskState === "completed" &&
+      !state.completedAlerts.includes(session.id)
+    ) {
+      state.completedAlerts.push(session.id);
+    }
+    state.taskStates.set(session.id, session.taskState);
+  }
 }
 
 function markSelectedTaskState(taskState) {
