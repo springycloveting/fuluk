@@ -755,7 +755,7 @@ function updateOutputText(text, options = {}) {
       els.terminalOutput.scrollTop = els.terminalOutput.scrollHeight;
     }
     if (!options.history) {
-      markSelectedTaskState(findYesOption(outputText) ? "needs_confirmation" : "in_progress");
+      if (findYesOption(outputText)) markSelectedTaskState("needs_confirmation");
       maybeAutoYes(outputText);
     }
 }

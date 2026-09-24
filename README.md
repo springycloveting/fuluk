@@ -45,7 +45,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ## 生产部署（systemd）
 
 ```bash
-sudo git clone https://github.com/springycloveting/fuluk-gateway /opt/fuluk-gateway
+sudo git clone https://github.com/springycloveting/fuluk /opt/fuluk-gateway
 cd /opt/fuluk-gateway
 sudo SERVICE_USER="$(id -un)" SERVICE_GROUP="$(id -gn)" ./deploy/install-systemd.sh
 sudo editor /etc/fuluk-gateway/fuluk-gateway.env   # 设置真实 SESSION_GATEWAY_TOKEN

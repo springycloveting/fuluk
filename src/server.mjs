@@ -320,11 +320,11 @@ async function handleSessionAction(req, res, url, method, idOrName, action, cont
     const etag = outputEtag(text, String(lines) + ":" + String(offset));
     if (url.searchParams.get("format") === "json") {
       const changed = url.searchParams.get("etag") !== etag;
-      if (changed && offset === 0) store.saveOutput(session.id, lines, text);
+      if (changed && offset === 0) store.saveOutput(session.id, lines, text, { touch: false });
       sendJson(res, 200, changed ? { changed, etag, output: text } : { changed, etag });
       return;
     }
-    if (offset === 0) store.saveOutput(session.id, lines, text);
+    if (offset === 0) store.saveOutput(session.id, lines, text, { touch: false });
     sendText(res, 200, text);
     return;
   }
@@ -382,7 +382,6 @@ async function handleSessionAction(req, res, url, method, idOrName, action, cont
     const body = await readJsonBody(req);
     const size = parseTmuxSize(body);
     await tmux.resize(session, size.cols, size.rows);
-    store.touch(session.id);
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -652,7 +651,7 @@ function createSessionAgentOperations(context) {
           if (session.status === "running") {
             try {
               output = await context.tmux.capture(session, lines);
-              context.store.saveOutput(session.id, lines, output);
+              context.store.saveOutput(session.id, lines, output, { touch: false });
             } catch {
               output = "";
             }
@@ -672,7 +671,7 @@ function createSessionAgentOperations(context) {
       };
       const session = requireCommandSession(command, withCurrentRequest(params), context);
       const output = await context.tmux.capture(session, command.lines);
-      context.store.saveOutput(session.id, command.lines, output);
+      context.store.saveOutput(session.id, command.lines, output, { touch: false });
       return { session, output };
     },
     async send_to_session(params = {}) {
@@ -697,7 +696,7 @@ function createSessionAgentOperations(context) {
       const command = { type: "switch", target: params.target ?? null, targetIndex: params.targetIndex };
       const session = requireCommandSession(command, withCurrentRequest(params), context);
       const output = await context.tmux.capture(session, 120);
-      context.store.saveOutput(session.id, 120, output);
+      context.store.saveOutput(session.id, 120, output, { touch: false });
       return { session, output };
     },
     async stop_session(params = {}) {

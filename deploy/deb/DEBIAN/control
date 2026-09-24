@@ -1,0 +1,14 @@
+Package: fuluk-gateway
+Version: @VERSION@
+Architecture: all
+Maintainer: springycloveting <springycloveting@users.noreply.github.com>
+Installed-Size: @INSTALLED_SIZE@
+Depends: nodejs (>= 18), tmux, passwd
+Section: net
+Priority: optional
+Homepage: https://github.com/springycloveting/fuluk
+Description: Web gateway for managing AI CLI tmux sessions
+ Fuluk Gateway exposes a token-protected HTTP API and web UI for creating,
+ listing and interacting with AI coding CLI sessions (Codex, Claude Code,
+ OpenCode) backed by tmux. State is stored in /var/lib/fuluk-gateway and
+ configuration is read from /etc/fuluk-gateway/fuluk-gateway.env.

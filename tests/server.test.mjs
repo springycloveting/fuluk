@@ -473,7 +473,6 @@ test("/api/sessions/:id/resize resizes only the selected session", async () => {
     tmuxSessionName: "session-1"
   };
   const resized = [];
-  const touched = [];
   const { statusCode, body } = await postJson(
     "/api/sessions/main/resize",
     { cols: 132, rows: 40 },
@@ -487,9 +486,6 @@ test("/api/sessions/:id/resize resizes only the selected session", async () => {
       store: {
         findByIdOrName(value) {
           return value === session.id || value === session.name ? session : null;
-        },
-        touch(sessionId) {
-          touched.push(sessionId);
         }
       },
       tmux: {
@@ -503,7 +499,6 @@ test("/api/sessions/:id/resize resizes only the selected session", async () => {
   assert.equal(statusCode, 200);
   assert.deepEqual(JSON.parse(body), { ok: true });
   assert.deepEqual(resized, [{ sessionId: "session-1", cols: 132, rows: 40 }]);
-  assert.deepEqual(touched, ["session-1"]);
 });
 
 test("/api/sessions/:id/resize rejects invalid terminal sizes", async () => {

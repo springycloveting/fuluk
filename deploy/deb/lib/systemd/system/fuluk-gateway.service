@@ -1,0 +1,18 @@
+[Unit]
+Description=Fuluk Gateway
+Documentation=https://github.com/springycloveting/fuluk-gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/fuluk-gateway
+EnvironmentFile=/etc/fuluk-gateway/fuluk-gateway.env
+ExecStart=/usr/bin/node src/server.mjs
+Restart=on-failure
+RestartSec=3
+User=fuluk-gateway
+Group=fuluk-gateway
+
+[Install]
+WantedBy=multi-user.target

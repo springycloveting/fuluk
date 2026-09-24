@@ -120,6 +120,11 @@ export class SessionStore {
   }
 
   saveOutput(sessionId, lines, text, options = {}) {
+    const latest = this.latestOutputSnapshot(sessionId);
+    if (latest && latest.text === text) {
+      if (options.touch !== false) this.touch(sessionId);
+      return latest;
+    }
     const capturedAt = nowIso();
     const result = this.db
       .prepare("insert into output_snapshots (session_id, captured_at, lines, text) values (?, ?, ?, ?)")

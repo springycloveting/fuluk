@@ -1,0 +1,36 @@
+#!/bin/sh
+set -e
+
+SERVICE_USER=fuluk-gateway
+SERVICE_GROUP=fuluk-gateway
+DATA_DIR=/var/lib/fuluk-gateway
+
+case "$1" in
+  configure)
+    if ! getent group "$SERVICE_GROUP" >/dev/null 2>&1; then
+      addgroup --system "$SERVICE_GROUP" >/dev/null
+    fi
+    if ! getent passwd "$SERVICE_USER" >/dev/null 2>&1; then
+      adduser --system --ingroup "$SERVICE_GROUP" \
+        --home "$DATA_DIR" --shell /usr/sbin/nologin \
+        --gecos "Fuluk Gateway service" "$SERVICE_USER" >/dev/null
+    fi
+
+    install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$DATA_DIR"
+    chown -R "$SERVICE_USER:$SERVICE_GROUP" "$DATA_DIR"
+    chmod 600 /etc/fuluk-gateway/fuluk-gateway.env
+
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl daemon-reload || true
+      systemctl enable fuluk-gateway.service >/dev/null 2>&1 || true
+    fi
+
+    echo ""
+    echo "Fuluk Gateway installed. Next steps:"
+    echo "  1. Edit /etc/fuluk-gateway/fuluk-gateway.env and set SESSION_GATEWAY_TOKEN."
+    echo "  2. Start: sudo systemctl start fuluk-gateway"
+    echo "  3. Check: curl http://127.0.0.1:8787/health"
+    ;;
+esac
+
+exit 0

@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+
+SERVICE_USER=fuluk-gateway
+
+case "$1" in
+  remove|upgrade|deconfigure)
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl daemon-reload || true
+    fi
+    ;;
+  purge)
+    if getent passwd "$SERVICE_USER" >/dev/null 2>&1; then
+      userdel "$SERVICE_USER" >/dev/null 2>&1 || true
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl daemon-reload || true
+    fi
+    ;;
+esac
+
+exit 0
