@@ -1,0 +1,14 @@
+{
+  "pages": [
+    "pages/setup/index",
+    "pages/assistant/index",
+    "pages/sessions/index",
+    "pages/confirm/index",
+    "pages/tui/index",
+    "pages/transparent/index"
+  ],
+  "permissions": ["RECORD_AUDIO"],
+  "window": {
+    "navigationBarTitleText": "Fuluk"
+  }
+}

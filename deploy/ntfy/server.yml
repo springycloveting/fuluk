@@ -1,0 +1,22 @@
+# ntfy server configuration for Fuluk Gateway
+# Local/LAN deployment. Clients connect at http://192.168.0.55:8099
+
+base-url: "http://192.168.0.55:8099"
+listen-http: ":8099"
+
+cache:
+  startup-queries:
+    - "PRAGMA journal_mode=WAL"
+
+attachment-cache-dir: "/var/cache/ntfy/attachments"
+attachment-total-size-limit: "100M"
+attachment-file-size-limit: "5M"
+attachment-expiry-duration: "1h"
+
+# LAN deployment: topics are open but use an unguessable topic.
+# To require login, create an auth file (see deploy/ntfy/README.md).
+auth-default-access: "read-write"
+
+enable-signup: false
+enable-login: false
+enable-reservations: false

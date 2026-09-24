@@ -1,0 +1,38 @@
+node_modules/
+dist/
+data/
+.env
+*.log
+.npmrc
+.claude/
+.codegraph/
+CLAUDE.md
+HANDOFF.md
+session-gateway-handoff.md
+TODO.md
+AI_CLI_Session_Manager_v1_Plan.md
+# Internal development handoff documents
+*handoff*.md
+PM_ROOM_HARNESS_HANDOFF.md
+fuluk-pi-workflow-setup-handoff.md
+# Internal development docs
+docs/pm-room-harness-*.md
+docs/tui-web-rendering-plans.md
+
+# Local scratch / convenience files (not project code)
+/back
+/gatewaystart
+/FAILURE_LOG.md
+
+# Internal working documents
+/docs/
+/CONTEXT.md
+/SECURITY_FIX_PLAN.md
+fuluk-glasses/AGENTS.md
+fuluk-glasses/PROJECT_MEMORY.md
+
+# Binary audio artifacts (local recordings, not committed)
+*.wav
+*.m4a
+*.jpeg
+*.zip

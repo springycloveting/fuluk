@@ -1,0 +1,16 @@
+services:
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    container_name: fuluk-ntfy
+    command: ["serve"]
+    restart: unless-stopped
+    ports:
+      - "8099:8099"
+    volumes:
+      - ./server.yml:/etc/ntfy/server.yml:ro
+      - ntfy-cache:/var/cache/ntfy
+      - ntfy-lib:/var/lib/ntfy
+
+volumes:
+  ntfy-cache:
+  ntfy-lib:

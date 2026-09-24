@@ -1,0 +1,4 @@
+opencode v1.18.27
+session: ses_f98dfabb4ffeL107W2NGuKCelf
+model: claude-sonnet-4
+cwd: /home/v6/work/app

@@ -1,0 +1,6 @@
+╔══════════════════════════════════════╗
+║  ✓ Welcome to Claude Code            ║
+╚══════════════════════════════════════╝
+session id: 8b2c4d6e-1a3b-4c5d-9e8f-2b3c4d5e6f7a
+cwd: /home/v6/work/app
+> 

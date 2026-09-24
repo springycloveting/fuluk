@@ -1,0 +1,8 @@
+codex-cli 0.152.0
+config: ~/.codex/config.toml
+session_id: 7a3f1c9e-4b2a-4f1c-9d8e-1a2b3c4d5e6f
+model: gpt-5-codex
+> /status
+session_id: 7a3f1c9e-4b2a-4f1c-9d8e-1a2b3c4d5e6f
+model: gpt-5-codex
+tokens: 1234 / 200000

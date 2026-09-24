@@ -1,0 +1,21 @@
+[Unit]
+Description=Fuluk Gateway
+Documentation=https://github.com/springycloveting/fuluk-gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/fuluk-gateway
+EnvironmentFile=/etc/fuluk-gateway/fuluk-gateway.env
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=3
+
+# Run as the user that owns /opt/fuluk-gateway and can access tmux.
+# The AI CLIs run directly on the host as this user.
+User=fuluk-gateway
+Group=fuluk-gateway
+
+[Install]
+WantedBy=multi-user.target

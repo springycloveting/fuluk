@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI CLI Session Manager</title>
+    <link rel="stylesheet" href="/vendor/xterm/xterm.min.css" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/vendor/xterm/xterm.min.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="identity">
+          <button id="open-sessions" class="ghost" type="button">会话</button>
+          <h1 id="selected-title">未选择会话</h1>
+        </div>
+        <div class="actions">
+          <button id="confirm-alert" class="confirm-alert" type="button" hidden>需要确认</button>
+          <button id="all-yes" class="all-yes-btn" type="button" data-state="off">All Yes</button>
+          <button id="open-history" class="ghost" type="button">历史</button>
+          <button id="open-create" class="ghost" type="button">新建</button>
+          <button id="open-run" class="ghost" type="button">助手</button>
+          <button id="restart" class="ghost" type="button">重启</button>
+          <button id="stop" class="ghost" type="button">停止</button>
+          <button id="open-config" class="ghost" type="button">配置</button>
+        </div>
+      </header>
+
+      <section class="terminal">
+        <div id="terminal-output" class="terminal-output">
+          <div id="xterm-output" class="xterm-output" hidden></div>
+          <pre id="output"></pre>
+        </div>
+        <div class="quick-key-row">
+          <div id="quick-keys" class="quick-keys" aria-label="快捷键"></div>
+          <button id="add-quick-key" class="quick-key-add" type="button" title="添加快捷键">+</button>
+        </div>
+        <div class="input-row">
+          <input id="input" placeholder="发送到当前会话" />
+          <button id="send" type="button">发送</button>
+        </div>
+      </section>
+
+      <aside id="sessions-panel" class="sessions-panel" aria-hidden="true">
+        <div class="panel-head">
+          <h2 data-i18n="sessionsTitle">会话</h2>
+          <div class="actions">
+            <button id="refresh" class="ghost" type="button">刷新</button>
+            <button id="close-sessions" class="ghost" type="button">关闭</button>
+            <select id="phase-filter" title="状态">
+              <option value="all">全部状态</option>
+              <option value="active">进行中</option>
+              <option value="stopped">已停止</option>
+              <option value="closed">已关闭</option>
+            </select>
+            <input id="session-search" type="search" placeholder="搜索名称/项目/路径" />
+          </div>
+        </div>
+        <div id="session-list" class="session-list"></div>
+      </aside>
+
+      <dialog id="config-dialog">
+        <form id="config-form" class="dialog-form">
+          <div class="dialog-head">
+            <h2 data-i18n="configTitle">配置</h2>
+            <button class="ghost" data-close-dialog="config-dialog" type="button" data-i18n="close">关闭</button>
+          </div>
+          <label>
+            <span data-i18n="language">语言</span>
+            <select id="language">
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+          <label>
+            <span data-i18n="theme">主题</span>
+            <select id="theme">
+              <option value="dark" data-i18n="darkTheme">黑暗</option>
+              <option value="light" data-i18n="lightTheme">明亮</option>
+            </select>
+          </label>
+          <label>
+            <span data-i18n="token">Bearer token</span>
+            <input id="token" type="password" autocomplete="off" placeholder="SESSION_GATEWAY_TOKEN" />
+          </label>
+          <fieldset>
+            <legend data-i18n="commandParser">助手与命令解析</legend>
+            <small>用于会话助手和自然语言命令解析。格式：provider:model-id，例如 openai:gpt-4o 或 anthropic:claude-sonnet-4-20250514</small>
+            <label class="inline-check">
+              <input id="web-pi-enabled" type="checkbox" />
+              <span data-i18n="webPiEnabled">启用 web-pi AI 助手</span>
+            </label>
+            <label class="inline-check">
+              <input id="ai-parser-fallback" type="checkbox" />
+              <span data-i18n="aiParserFallback">规则解析失败时用 AI 回退解析</span>
+            </label>
+            <input id="ai-parser-base-url" placeholder="API base URL，例如 https://api.anthropic.com" />
+            <input id="ai-parser-model" placeholder="provider:model-id，例如 anthropic:claude-sonnet-4-20250514" />
+            <input id="ai-parser-api-key" type="password" autocomplete="off" placeholder="API key" />
+          </fieldset>
+          <fieldset>
+            <legend>AI眼镜认证</legend>
+            <small>眼镜端语音输入地址后，在此批准配对；批准后无需再输入 token。</small>
+            <div id="glass-pending-list" class="glass-list"></div>
+            <details>
+              <summary>已授权眼镜</summary>
+              <div id="glass-keys-list" class="glass-list"></div>
+            </details>
+          </fieldset>
+          <button id="save-config" type="submit" data-i18n="save">保存</button>
+        </form>
+      </dialog>
+
+      <dialog id="create-dialog">
+        <form id="create-form" class="dialog-form">
+          <div class="dialog-head">
+            <h2 data-i18n="createTitle">新建会话</h2>
+            <button class="ghost" data-close-dialog="create-dialog" type="button" data-i18n="close">关闭</button>
+          </div>
+          <select id="kind">
+            <option value="codex">codex</option>
+            <option value="claude">claude</option>
+            <option value="opencode">opencode</option>
+            <option value="pi-os">pi-os</option>
+            <option value="runtime">runtime</option>
+          </select>
+          <input id="name" placeholder="会话名，例如 codex-app" />
+          <input id="cwd" placeholder="工作目录，留空使用默认目录" />
+          <input id="project" placeholder="项目名" />
+          <button id="create" type="submit">新建</button>
+        </form>
+      </dialog>
+
+      <section id="run-dialog" class="assistant-panel" aria-hidden="true">
+        <div class="dialog-head">
+          <div>
+            <h2 data-i18n="commandTitle">助手</h2>
+            <p class="assistant-subtitle">web-pi</p>
+          </div>
+          <button id="close-run" class="ghost" type="button" data-i18n="close">关闭</button>
+        </div>
+        <div id="assistant-messages" class="assistant-messages" aria-live="polite"></div>
+        <form id="run-form" class="assistant-form">
+          <input id="nl" placeholder="查看并总结当前会话。" />
+          <button id="run-nl" type="submit">发送</button>
+        </form>
+      </section>
+
+      <dialog id="delete-dialog">
+        <form id="delete-form" class="dialog-form">
+          <div class="dialog-head">
+            <h2 data-i18n="deleteTitle">删除会话</h2>
+            <button class="ghost" data-close-dialog="delete-dialog" type="button" data-i18n="close">关闭</button>
+          </div>
+          <p id="delete-message" class="dialog-message"></p>
+          <div class="dialog-actions">
+            <button class="ghost" data-close-dialog="delete-dialog" type="button" data-i18n="cancel">取消</button>
+            <button id="confirm-delete" class="danger" type="submit" data-i18n="delete">删除</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="quick-key-dialog">
+        <form id="quick-key-form" class="dialog-form">
+          <div class="dialog-head">
+            <h2 data-i18n="quickKeyTitle">自定义快捷键</h2>
+            <button class="ghost" data-close-dialog="quick-key-dialog" type="button" data-i18n="close">关闭</button>
+          </div>
+          <input id="quick-key-label" maxlength="16" placeholder="显示名称，例如 Y" />
+          <input id="quick-key-value" placeholder="例如 1 或 yes" />
+          <div class="dialog-actions">
+            <button class="ghost" data-close-dialog="quick-key-dialog" type="button" data-i18n="cancel">取消</button>
+            <button id="save-quick-key" type="submit" data-i18n="save">保存</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="history-dialog">
+        <form id="history-form" class="dialog-form history-dialog-form">
+          <div class="dialog-head">
+            <h2 data-i18n="historyTitle">输入历史</h2>
+            <button class="ghost" data-close-dialog="history-dialog" type="button" data-i18n="close">关闭</button>
+          </div>
+          <div id="history-list" class="history-list"></div>
+        </form>
+      </dialog>
+
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
