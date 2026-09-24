@@ -14,6 +14,7 @@ import {
   restartSession,
   runProbeWithBudget,
   readClaudeLocalSessionId,
+  readCodexLocalSessionId,
   readOpencodeLocalSessionId,
   scheduleCaptureAfterCreate,
   stripAnsi
@@ -177,30 +178,47 @@ test("captureCliSessionId skips non-running and non-resumable sessions", async (
   }
 });
 
-test("captureCliSessionId sends /status once for codex and stores on second capture", async () => {
-  const session = { id: "s5", kind: "codex", status: "running", cliSessionId: null, tmuxSessionName: "sg-s5" };
+test("readCodexLocalSessionId finds the rollout for the session cwd", () => {
+  const session = { id: "s5", kind: "codex", cwd: "/tmp/codex-proj" };
+  const id = readCodexLocalSessionId(
+    session,
+    path.join(__dirname, "fixtures", "codex-sessions")
+  );
+  assert.equal(id, "01a0d252-543f-7933-bc28-4989e08c1a78");
+});
+
+test("readCodexLocalSessionId ignores rollouts for other cwds", () => {
+  const session = { id: "s5", kind: "codex", cwd: "/tmp/codex-proj" };
+  const id = readCodexLocalSessionId(
+    session,
+    path.join(__dirname, "fixtures", "codex-sessions-other")
+  );
+  assert.equal(id, null);
+});
+
+test("captureCliSessionId stores codex id from local rollout without injecting /status", async () => {
+  const session = { id: "s5", kind: "codex", status: "running", cliSessionId: null, tmuxSessionName: "sg-s5", cwd: "/tmp/codex-proj" };
   const store = fakeStore(session);
   const sends = [];
-  // The single tmux.capture call (inside the codex branch) returns the
-  // /status fixture; the initial `output` is passed in directly (no-id banner).
-  const outputs = [fixture("codex-status.txt")];
   const tmux = {
-    capture: async () => outputs.shift(),
+    capture: async () => "codex-cli 0.156.0\n(no id in banner)",
     send: async (_record, text) => sends.push(text),
     sleep: async () => {}
   };
 
-  const stored = await captureCliSessionId("s5", { store, tmux, config: { cliStartupDelayMs: 0 } }, {
-    output: "codex-cli 0.152.0\n(no id yet)"
-  });
+  const stored = await captureCliSessionId(
+    "s5",
+    { store, tmux, config: { codexStorageHome: path.join(__dirname, "fixtures", "codex-sessions") } },
+    { output: "codex-cli 0.156.0\n(no id)" }
+  );
 
   assert.equal(stored, true);
-  assert.deepEqual(sends, ["/status"]);
-  assert.equal(store.current().cliSessionId, "7a3f1c9e-4b2a-4f1c-9d8e-1a2b3c4d5e6f");
+  assert.deepEqual(sends, []); // nothing typed into the TUI
+  assert.equal(store.current().cliSessionId, "01a0d252-543f-7933-bc28-4989e08c1a78");
 });
 
-test("captureCliSessionId does not send /status twice for the same codex session", async () => {
-  const session = { id: "s6", kind: "codex", status: "running", cliSessionId: null, tmuxSessionName: "sg-s6" };
+test("captureCliSessionId returns false for codex when no rollout exists yet", async () => {
+  const session = { id: "s6", kind: "codex", status: "running", cliSessionId: null, tmuxSessionName: "sg-s6", cwd: "/tmp/codex-proj" };
   const store = fakeStore(session);
   const sends = [];
   const tmux = {
@@ -209,10 +227,13 @@ test("captureCliSessionId does not send /status twice for the same codex session
     sleep: async () => {}
   };
 
-  await captureCliSessionId("s6", { store, tmux, config: { cliStartupDelayMs: 0 } });
-  await captureCliSessionId("s6", { store, tmux, config: { cliStartupDelayMs: 0 } });
+  const stored = await captureCliSessionId(
+    "s6",
+    { store, tmux, config: { codexStorageHome: path.join(__dirname, "fixtures", "codex-sessions-other") } }
+  );
 
-  assert.deepEqual(sends, ["/status"]); // only once across both calls
+  assert.equal(stored, false);
+  assert.deepEqual(sends, []); // never injects /status
 });
 
 test("captureCliSessionId swallows errors and returns false", async () => {

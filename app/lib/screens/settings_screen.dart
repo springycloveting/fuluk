@@ -88,15 +88,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final c = widget.config;
     if (!c.ntfyConfigured) throw Exception("请填写 ntfy 服务器和 Topic");
     final server = c.ntfyServer.trim().replaceAll(RegExp(r"/+$"), "");
-    final headers = <String, String>{"title": "Fuluk 测试"};
+    final topic = Uri.encodeComponent(c.ntfyTopic.trim());
+    final uri = Uri.parse("$server/$topic").replace(queryParameters: {
+      "title": "Fuluk 测试通知"
+    });
+    final headers = <String, String>{};
     if (c.ntfyToken.trim().isNotEmpty) {
       headers["authorization"] =
           c.ntfyToken.startsWith("Bearer ") || c.ntfyToken.startsWith("Basic ")
               ? c.ntfyToken.trim()
               : "Bearer ${c.ntfyToken.trim()}";
     }
-    final response = await http.post(Uri.parse("$server/${c.ntfyTopic.trim()}"),
-        headers: headers, body: "如果你看到这条消息，ntfy 通知配置正常。");
+    final response =
+        await http.post(uri, headers: headers, body: "如果你看到这条消息，ntfy 通知配置正常。");
     if (response.statusCode != 200) {
       throw Exception("HTTP ${response.statusCode}");
     }

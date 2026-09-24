@@ -1058,29 +1058,23 @@ async function sendNtfyNotification(event, { config, tmux, fetchImpl = fetch }) 
   if (!ntfy?.enabled) return;
   const session = event.session;
   const needsConfirm = event.taskState === "needs_confirmation";
-  const message = needsConfirm
-    ? `会话:${session.name} 需要审核`
-    : `会话:${session.name} 已完成`;
+  const message = `${session.name} ${needsConfirm ? "等待确认" : "已完成"}`;
   const title = message;
-  const payload = {
-    topic: ntfy.topic,
-    message,
-    title,
-    tags: [needsConfirm ? "question" : "white_check_mark"],
-    priority: needsConfirm ? 4 : 3,
-    click: `fuluk://session/${session.id}`
-  };
-  const headers = { "content-type": "application/json" };
+  const tag = needsConfirm ? "question" : "white_check_mark";
+  const priority = needsConfirm ? 4 : 3;
+  const click = `fuluk://session/${session.id}`;
+  const query = new URLSearchParams({ title, priority: String(priority), tags: tag, click });
+  const headers = { "content-type": "text/plain;charset=UTF-8" };
   if (ntfy.token) {
     headers.authorization = /^(?:Bearer|Basic)\s/i.test(ntfy.token)
       ? ntfy.token
       : `Bearer ${ntfy.token}`;
   }
   try {
-    await fetchImpl(`${ntfy.server}/${encodeURIComponent(ntfy.topic)}`, {
+    await fetchImpl(`${ntfy.server}/${encodeURIComponent(ntfy.topic)}?${query.toString()}`, {
       method: "POST",
       headers,
-      body: JSON.stringify(payload)
+      body: message
     });
   } catch (error) {
     console.warn(`ntfy notification failed: ${errorMessage(error)}`);

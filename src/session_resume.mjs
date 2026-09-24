@@ -48,6 +48,73 @@ export function readClaudeLocalSessionId(session, baseDir) {
   }
 }
 
+function defaultCodexStorageHome() {
+  return path.join(os.homedir(), ".codex", "sessions");
+}
+
+function listFilesRecursive(dir) {
+  const results = [];
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return results;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...listFilesRecursive(full));
+    } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      results.push(full);
+    }
+  }
+  return results;
+}
+
+// Fallback B (codex): codex writes a rollout-<timestamp>-<uuid>.jsonl under
+// ~/.codex/sessions/<year>/<month>/<day>/ as soon as the TUI starts. Its first
+// line is a session_meta event carrying session_id + cwd, so the handle is
+// available without injecting /status into the TUI (which newer codex builds
+// fail to auto-submit while startup tips are showing).
+export function readCodexLocalSessionId(session, baseDir) {
+  if (!session?.cwd) return null;
+  const storageHome = baseDir ?? defaultCodexStorageHome();
+  if (!fs.existsSync(storageHome)) return null;
+  const resolvedCwd = path.resolve(session.cwd);
+  const createdAtMs = Number.isFinite(Date.parse(session.createdAt ?? ""))
+    ? Date.parse(session.createdAt)
+    : null;
+  try {
+    const files = listFilesRecursive(storageHome)
+      .map((file) => ({ file, mtime: fs.statSync(file).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    for (const { file } of files) {
+      let firstLine;
+      try {
+        firstLine = fs.readFileSync(file, "utf8").split("\n")[0];
+      } catch {
+        continue;
+      }
+      let meta;
+      try {
+        meta = JSON.parse(firstLine).payload;
+      } catch {
+        continue;
+      }
+      if (!meta || meta.cwd == null || path.resolve(meta.cwd) !== resolvedCwd) continue;
+      const startedAtMs = Date.parse(meta.timestamp ?? "");
+      if (createdAtMs !== null && Number.isFinite(startedAtMs) && startedAtMs < createdAtMs - 60_000) {
+        continue;
+      }
+      const id = meta.session_id ?? meta.id;
+      if (typeof id === "string" && HANDLE_PATTERNS.codex.test(id)) return id;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function defaultOpencodeStorageHome() {
   return path.join(os.homedir(), ".local", "share", "opencode");
 }
@@ -136,11 +203,9 @@ export async function runProbeWithBudget(key, attempt, options = {}) {
   }
   return false;
 }
-const statusProbed = new Set(); // codex session ids that got a /status injection this process life
-
 // Single capture attempt. Idempotent. Returns true if a handle was stored.
-// statusProbed bounds codex /status injections to one per process life so the
-// recurring poll cannot spam /status.
+// Handles are read from each CLI's local storage; nothing is injected into the
+// running TUI.
 export async function captureCliSessionId(sessionId, context, { output } = {}) {
   const { store, tmux, config } = context;
   try {
@@ -165,24 +230,18 @@ export async function captureCliSessionId(sessionId, context, { output } = {}) {
       }
     }
 
-    if (session.kind === "opencode") {
-      const local = readOpencodeLocalSessionId(session, context.config?.opencodeStorageHome);
+    if (session.kind === "codex") {
+      const local = readCodexLocalSessionId(session, context.config?.codexStorageHome);
       if (local) {
         store.setCliSessionId(session.id, local);
         return true;
       }
     }
 
-    if (session.kind === "codex" && !statusProbed.has(session.id)) {
-      statusProbed.add(session.id);
-      await tmux.send(session, "/status");
-      if (typeof tmux.sleep === "function") {
-        await tmux.sleep(config.cliStartupDelayMs ?? 3000);
-      }
-      const out2 = await tmux.capture(session, CAPTURE_LINES);
-      id = parseCliSessionId("codex", out2);
-      if (id) {
-        store.setCliSessionId(session.id, id);
+    if (session.kind === "opencode") {
+      const local = readOpencodeLocalSessionId(session, context.config?.opencodeStorageHome);
+      if (local) {
+        store.setCliSessionId(session.id, local);
         return true;
       }
     }

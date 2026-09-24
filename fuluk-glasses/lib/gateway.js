@@ -81,6 +81,22 @@ export function findConfirmingSession() {
   );
 }
 
+export function findAlertSession(excludeCompletedIds = []) {
+  return listSessions().then((sessions) => {
+    const completedIds = sessions
+      .filter((item) => item.taskState === 'completed')
+      .map((item) => item.id);
+    const confirming = sessions.find((item) => item.taskState === 'needs_confirmation');
+    if (confirming) return { type: 'confirm', session: confirming, completedIds };
+    const completed = sessions.find(
+      (item) => item.taskState === 'completed' && !excludeCompletedIds.includes(item.id)
+    );
+    return completed
+      ? { type: 'done', session: completed, completedIds }
+      : { type: null, completedIds };
+  });
+}
+
 export function resolveChoice(sessionId, choice) {
   const body = choice.send === 'keys' ? { keys: choice.keys } : { text: choice.value };
   return request(`/api/sessions/${encodeURIComponent(sessionId)}/${choice.send}`, {

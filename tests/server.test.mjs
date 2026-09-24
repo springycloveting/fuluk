@@ -1680,7 +1680,7 @@ test("/api/sessions publishes a transition to the configured ntfy server", async
     eventHub: { broadcast() {} },
     sessionTaskStates: new Map(),
     async fetchImpl(url, options) {
-      ntfyRequests.push({ url, options, body: JSON.parse(options.body) });
+      ntfyRequests.push({ url, options, body: options.body });
       return { ok: true };
     }
   };
@@ -1688,9 +1688,12 @@ test("/api/sessions publishes a transition to the configured ntfy server", async
   assert.equal((await getJson("/api/sessions", context)).statusCode, 200);
   assert.equal((await getJson("/api/sessions", context)).statusCode, 200);
   assert.equal(ntfyRequests.length, 1);
-  assert.equal(ntfyRequests[0].url, "https://ntfy.example/fuluk");
+  const parsedUrl = new URL(ntfyRequests[0].url);
+  assert.equal(`${parsedUrl.origin}${parsedUrl.pathname}`, "https://ntfy.example/fuluk");
+  assert.equal(parsedUrl.searchParams.get("title"), "confirm 等待确认");
+  assert.equal(parsedUrl.searchParams.get("priority"), "4");
+  assert.equal(parsedUrl.searchParams.get("tags"), "question");
+  assert.equal(parsedUrl.searchParams.get("click"), "fuluk://session/session-1");
   assert.equal(ntfyRequests[0].options.headers.authorization, "Bearer ntfy-token");
-  assert.equal(ntfyRequests[0].body.title, "会话:confirm 需要审核");
-  assert.equal(ntfyRequests[0].body.message, "会话:confirm 需要审核");
-  assert.equal(ntfyRequests[0].body.click, "fuluk://session/session-1");
+  assert.equal(ntfyRequests[0].body, "confirm 等待确认");
 });

@@ -7,7 +7,7 @@
 <script setup>
 import wx from 'wx';
 import { getConfig, getSession } from '../../lib/store.js';
-import { findConfirmingSession, isFatalSetupError } from '../../lib/gateway.js';
+import { findAlertSession, isFatalSetupError } from '../../lib/gateway.js';
 
 export default {
   data: {
@@ -55,12 +55,22 @@ export default {
   },
   checkPrompt() {
     if (this.confirmOpen) return;
-    findConfirmingSession()
-      .then((session) => {
-        if (!session) return;
+    findAlertSession(this.completedSeen || [])
+      .then((alert) => {
+        if (!Array.isArray(this.completedSeen)) {
+          this.completedSeen = alert.completedIds.slice();
+        } else {
+          this.completedSeen = this.completedSeen.filter((id) => alert.completedIds.includes(id));
+        }
+        if (!alert.type) return;
+        const session = alert.session;
+        if (alert.type === 'done') this.completedSeen.push(session.id);
         this.confirmOpen = true;
         this.stopPolling();
-        wx.navigateTo({ url: `/pages/confirm/index?id=${encodeURIComponent(session.id)}` });
+        const page = alert.type === 'confirm' ? 'confirm' : 'done';
+        wx.navigateTo({
+          url: `/pages/${page}/index?id=${encodeURIComponent(session.id)}&name=${encodeURIComponent(session.name || session.id)}`,
+        });
       })
       .catch((error) => {
         if (isFatalSetupError(error)) this.backToSetup();
