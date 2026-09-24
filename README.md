@@ -94,7 +94,9 @@ npm test        # 运行 node:test 测试套件
 
 ## 文档
 
+- [INSTALL.md](INSTALL.md) — 安装指南（依赖 / tmux / ntfy / LazyTyper 语音输入）
 - [USAGE.md](USAGE.md) — Web 界面与 REST 用法详解（中英）
+- [WEB_UI_GUIDE.md](WEB_UI_GUIDE.md) — Web 界面一步一步使用手册
 - [API_REFERENCE.md](API_REFERENCE.md) — API 参考（中英）
 - [SECURITY.md](SECURITY.md) — 安全模型与部署建议
 - [STARTUP.md](STARTUP.md) — 本地启动速查
