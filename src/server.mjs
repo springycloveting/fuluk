@@ -384,7 +384,7 @@ async function handleSessionAction(req, res, url, method, idOrName, action, cont
   }
 
   if (method === "POST" && action === "input") {
-    const bodyInput = await readJsonBody();
+    const bodyInput = await readJsonBody(req);
     if (typeof bodyInput.text !== "string" || !bodyInput.text.trim()) throw new Error("text is required");
     await tmux.send(session, bodyInput.text);
     store.saveInput(session.id, bodyInput.text);
