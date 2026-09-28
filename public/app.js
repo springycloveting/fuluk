@@ -28,6 +28,9 @@ const state = {
   pendingDeleteSession: null,
   assistantMessages: [],
   customQuickKeys: loadCustomQuickKeys(),
+  cwdPolicy: null,
+  browserDir: "",
+  cwdSelectedName: "",
   language: localStorage.getItem("sessionGatewayLanguage") || "zh",
   theme: localStorage.getItem("sessionGatewayTheme") || "dark",
   phaseFilter: (() => {
@@ -90,10 +93,19 @@ const translations = {
     phaseStopped: "已停止",
     phaseClosed: "已关闭",
     confirmAlert: "需要确认：{name}",
-    completedAlert: "已完成：{name}",
+    completedAlert: "已停止：{name}",
     sendPlaceholder: "发送到当前会话",
     namePlaceholder: "会话名，例如 codex-app",
     cwdPlaceholder: "工作目录，留空则使用默认会话目录",
+    browse: "浏览",
+    upLevel: "上一级",
+    newFolder: "新建",
+    newFolderNamePlaceholder: "新文件夹名",
+    selectFolder: "确认",
+    cancel: "取消",
+    emptyFolder: "空文件夹",
+    strictCwdHint: "严格模式：仅允许白名单内目录：{roots}",
+    looseCwdHint: "未开启严格模式，允许手动输入任意目录",
     projectPlaceholder: "项目名",
     nlPlaceholder: "问 web-pi，例如：查看并总结当前会话。"
   },
@@ -147,10 +159,19 @@ const translations = {
     phaseStopped: "Stopped",
     phaseClosed: "Closed",
     confirmAlert: "Needs confirmation: {name}",
-    completedAlert: "Completed: {name}",
+    completedAlert: "Stopped: {name}",
     sendPlaceholder: "Send text to selected session",
     namePlaceholder: "Session name, e.g. codex-app",
     cwdPlaceholder: "Working directory; leave blank for the default session folder",
+    browse: "Browse",
+    upLevel: "Up",
+    newFolder: "New",
+    newFolderNamePlaceholder: "New folder name",
+    selectFolder: "Confirm",
+    cancel: "Cancel",
+    emptyFolder: "Empty folder",
+    strictCwdHint: "Strict mode: only whitelisted directories are allowed: {roots}",
+    looseCwdHint: "Strict mode is off; any manually entered directory is allowed",
     projectPlaceholder: "Project",
     nlPlaceholder: "Ask web-pi, e.g. summarize the current session."
   }
@@ -198,6 +219,15 @@ const els = {
   kind: document.querySelector("#kind"),
   name: document.querySelector("#name"),
   cwd: document.querySelector("#cwd"),
+  browseCwd: document.querySelector("#browse-cwd"),
+  cwdBrowser: document.querySelector("#cwd-browser"),
+  cwdUp: document.querySelector("#cwd-up"),
+  cwdCurrent: document.querySelector("#cwd-current"),
+  cwdList: document.querySelector("#cwd-list"),
+  cwdNewName: document.querySelector("#cwd-new-name"),
+  cwdMkdir: document.querySelector("#cwd-mkdir"),
+  cwdSelect: document.querySelector("#cwd-select"),
+  cwdHint: document.querySelector("#cwd-hint"),
   project: document.querySelector("#project"),
   create: document.querySelector("#create"),
   nl: document.querySelector("#nl"),
@@ -265,7 +295,10 @@ els.completedAlert.addEventListener("click", async () => {
   await selectSession(session);
   renderCompletedAlert();
 });
-els.closeSessions.addEventListener("click", closeSessionsPanel);
+els.closeSessions.addEventListener("click", () => {
+  closeSessionsPanel();
+  refreshTerminalForLayoutChange();
+});
 els.openConfig.addEventListener("click", async () => {
   try {
     await loadConfig();
@@ -279,9 +312,52 @@ els.openHistory.addEventListener("click", async () => {
   await loadHistory();
   els.historyDialog.showModal();
 });
-els.openCreate.addEventListener("click", () => {
+els.openCreate.addEventListener("click", async () => {
+  await ensureCwdPolicy();
+  renderCwdHint();
   els.createDialog.showModal();
   els.cwd.focus();
+});
+els.browseCwd.addEventListener("click", async () => {
+  await ensureCwdPolicy();
+  const startDir = els.cwd.value.trim() || state.cwdPolicy?.defaultCwd || "";
+  await openCwdBrowser(startDir);
+});
+els.cwdUp.addEventListener("click", async () => {
+  const data = await browseCwd(state.browserDir);
+  if (data.parent) await renderCwdBrowser(data.parent);
+});
+els.cwdList.addEventListener("click", async (event) => {
+  const item = event.target.closest("[data-cwd-entry]");
+  if (!item) return;
+  document.querySelectorAll(".cwd-entry.selected").forEach((element) => element.classList.remove("selected"));
+  item.classList.add("selected");
+  state.cwdSelectedName = item.dataset.cwdEntry;
+});
+els.cwdList.addEventListener("dblclick", async (event) => {
+  const item = event.target.closest("[data-cwd-entry]");
+  if (!item) return;
+  await renderCwdBrowser(`${state.browserDir.replace(/\/+$/, "")}/${item.dataset.cwdEntry}`);
+});
+els.cwdMkdir.addEventListener("click", async () => {
+  const name = els.cwdNewName.value.trim();
+  if (!name) return;
+  try {
+    await api("/api/fs/mkdir", {
+      method: "POST",
+      body: JSON.stringify({ parent: state.browserDir, name })
+    });
+    els.cwdNewName.value = "";
+    await renderCwdBrowser(state.browserDir);
+  } catch (error) {
+    showCwdError(error instanceof Error ? error.message : String(error));
+  }
+});
+els.cwdSelect.addEventListener("click", () => {
+  els.cwd.value = state.cwdSelectedName
+    ? `${state.browserDir.replace(/\/+$/, "")}/${state.cwdSelectedName}`
+    : state.browserDir;
+  els.cwdBrowser.hidden = true;
 });
 els.openRun.addEventListener("click", () => {
   openAssistant();
@@ -359,17 +435,17 @@ els.quickKeyForm.addEventListener("submit", (event) => {
 els.input.addEventListener("keydown", (event) => {
   if (event.key === "Enter") sendInput();
   if (event.key === "PageUp" || event.key === "PageDown") {
-    const selected = currentSelectedSession();
-    if (shouldUsePaneWheel(selected)) {
-      event.preventDefault();
-      sendQuickKeys([event.key === "PageUp" ? "WheelUpPane" : "WheelDownPane"]);
-    }
+    event.preventDefault();
+    sendQuickKeys([event.key === "PageUp" ? "WheelUpPane" : "WheelDownPane"]);
   }
 });
 els.terminalOutput.addEventListener("wheel", handleOutputWheel, { passive: false, capture: true });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
-    closeSessionsPanel();
+    if (els.sessionsPanel.classList.contains("open")) {
+      closeSessionsPanel();
+      refreshTerminalForLayoutChange();
+    }
     closeAssistant();
   }
 });
@@ -571,6 +647,83 @@ async function refreshSessions() {
   }
 }
 
+async function ensureCwdPolicy() {
+  if (state.cwdPolicy) return state.cwdPolicy;
+  const data = await api("/api/config");
+  state.cwdPolicy = data.cwdPolicy ?? null;
+  return state.cwdPolicy;
+}
+
+function renderCwdHint() {
+  const policy = state.cwdPolicy;
+  if (!policy) {
+    els.cwdHint.textContent = "";
+    return;
+  }
+  if (policy.strictCwd) {
+    els.cwdHint.textContent = t("strictCwdHint").replace(
+      "{roots}",
+      policy.allowedCwds.join(" , ")
+    );
+  } else {
+    els.cwdHint.textContent = t("looseCwdHint");
+  }
+}
+
+async function showCwdError(message) {
+  els.cwdHint.textContent = message;
+  els.cwdHint.classList.add("error");
+}
+
+function browseCwd(dir) {
+  return api(`/api/fs/browse?dir=${encodeURIComponent(dir)}`);
+}
+
+async function openCwdBrowser(dir) {
+  els.cwdBrowser.hidden = false;
+  try {
+    await renderCwdBrowser(dir);
+  } catch (error) {
+    if (state.cwdPolicy?.defaultCwd) await renderCwdBrowser(state.cwdPolicy.defaultCwd);
+    else showCwdError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function renderCwdBrowser(dir) {
+  const data = await browseCwd(dir);
+  els.cwdHint.classList.remove("error");
+  renderCwdHint();
+  state.browserDir = data.path;
+  state.cwdSelectedName = "";
+  els.cwdCurrent.textContent = data.path;
+  els.cwdCurrent.title = data.path;
+  els.cwdUp.disabled = !data.parent;
+  if (!data.directories.length) {
+    const empty = document.createElement("div");
+    empty.className = "cwd-empty";
+    empty.textContent = t("emptyFolder");
+    els.cwdList.replaceChildren(empty);
+    return;
+  }
+  els.cwdList.replaceChildren(...data.directories.map(buildCwdEntry));
+}
+
+function buildCwdEntry(name) {
+  const item = document.createElement("button");
+  item.type = "button";
+  item.className = "cwd-entry";
+  item.dataset.cwdEntry = name;
+  const icon = document.createElement("span");
+  icon.className = "cwd-entry-icon";
+  icon.innerHTML =
+    '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M1.5 3.75C1.5 2.78 2.28 2 3.25 2h2.7c.48 0 .93.19 1.27.53L8.56 3.9h4.19c.97 0 1.75.78 1.75 1.75v5.6c0 .97-.78 1.75-1.75 1.75H3.25c-.97 0-1.75-.78-1.75-1.75V3.75Z"/></svg>';
+  const label = document.createElement("span");
+  label.className = "cwd-entry-name";
+  label.textContent = name;
+  item.append(icon, label);
+  return item;
+}
+
 async function createSession() {
   try {
     const body = {
@@ -686,6 +839,19 @@ async function resizeTerminalForSession(session) {
   return true;
 }
 
+// 面板开合改变终端尺寸后，按切换会话的方式同步 tmux 并刷新输出
+async function refreshTerminalForLayoutChange() {
+  const selected = currentSelectedSession();
+  if (!selected || selected.status !== "running") return;
+  try {
+    if (await resizeTerminalForSession(selected)) {
+      await loadOutput({ force: true });
+    }
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
 function measureTerminalSize() {
   const target = terminalMeasureElement();
   if (!target || target.hidden) return null;
@@ -744,7 +910,7 @@ function updateOutputText(text, options = {}) {
     state.latestOutputText = outputText;
     const shouldStickToBottom =
       els.terminalOutput.scrollHeight - els.terminalOutput.scrollTop - els.terminalOutput.clientHeight < 48;
-    const renderedWithXterm = renderTerminalText(outputText);
+    const renderedWithXterm = renderTerminalText(outputText, { history: options.history === true });
     if (!renderedWithXterm) {
       if (els.xtermOutput) els.xtermOutput.hidden = true;
       els.output.hidden = false;
@@ -786,13 +952,13 @@ function ensureTerminal() {
   return true;
 }
 
-function renderTerminalText(text) {
+function renderTerminalText(text, options = {}) {
   if (!els.xtermOutput || typeof window.Terminal !== "function") return false;
   if (!ensureTerminal()) return false;
   const size = measureTerminalSize();
   if (size) state.terminal.resize(size.cols, size.rows);
   const version = (state.terminalRenderVersion += 1);
-  const snapshot = visibleTerminalSnapshot(text, size?.rows);
+  const snapshot = options.history ? text : visibleTerminalSnapshot(text, size?.rows);
   state.terminal.write("\x1b[3J\x1b[2J\x1b[H" + snapshot, () => {
     if (version === state.terminalRenderVersion) state.terminal.scrollToBottom();
   });
@@ -821,15 +987,15 @@ function terminalTheme() {
     return {
       background: "#ffffff",
       foreground: "#17202a",
-      cursor: "#1f6feb",
+      cursor: "#0e7490",
       selectionBackground: "#c6d0dc"
     };
   }
   return {
-    background: "#05080c",
-    foreground: "#dbe7f3",
-    cursor: "#2f81f7",
-    selectionBackground: "#2b3745"
+    background: "#0d0d0d",
+    foreground: "#c8c8c8",
+    cursor: "#67e8f9",
+    selectionBackground: "#1a2e30"
   };
 }
 
@@ -837,44 +1003,23 @@ function handleOutputWheel(event) {
   if (!shouldForwardOutputWheel(event)) return;
   event.preventDefault();
   const now = Date.now();
-  if (now - state.outputWheelLastSentAt < 180) return;
+  if (now - state.outputWheelLastSentAt < 80) return;
   state.outputWheelLastSentAt = now;
-  const selected = currentSelectedSession();
-  if (shouldUsePaneWheel(selected)) {
-    // opencode: forward wheel to tmux copy-mode pane scrolling
-    const wheelKey = event.deltaY < 0 ? "WheelUpPane" : "WheelDownPane";
-    sendQuickKeys(Array.from({ length: 5 }, () => wheelKey), { skipRefresh: true });
-    return;
-  }
-  // claude/codex/etc.: xterm holds no scrollback (renderTerminalText clears it
-  // every refresh and only writes the visible tail), so native wheel scrolling
-  // does nothing. Scroll through tmux history via the server-side offset instead.
-  scrollOutputHistory(event.deltaY < 0 ? -1 : 1);
+  const wheelKey = event.deltaY < 0 ? "WheelUpPane" : "WheelDownPane";
+  sendQuickKeys(Array.from({ length: wheelLineCount(event) }, () => wheelKey), { skipRefresh: true });
 }
 
-function shouldUsePaneWheel(session) {
-  return session?.kind === "opencode";
+function wheelLineCount(event) {
+  const delta = Math.abs(event.deltaY || 0);
+  if (event.deltaMode === 1) return clampInteger(Math.round(delta), 1, 50);
+  if (event.deltaMode === 2) return clampInteger(Math.round(delta * 24), 1, 200);
+  return clampInteger(Math.round(delta / 40), 1, 50);
 }
 
 function shouldForwardOutputWheel(event) {
   const selected = currentSelectedSession();
   if (!selected || selected.status !== "running") return false;
   if (!event.deltaY) return false;
-  return true;
-}
-
-function scrollOutputHistory(step) {
-  const selected = currentSelectedSession();
-  if (!selected || selected.status !== "running") return false;
-  const direction = step < 0 ? -1 : 1;
-  const absStep = Math.abs(step);
-  const nextOffset = direction < 0
-    ? Math.min(state.outputScrollOffset + absStep, 5000)
-    : Math.max(state.outputScrollOffset - absStep, 0);
-  if (nextOffset === state.outputScrollOffset) return false;
-  state.outputScrollOffset = nextOffset;
-  clearOutputEtag(selected.id);
-  loadOutput({ force: true });
   return true;
 }
 
@@ -1163,15 +1308,10 @@ function activateQuickKey(quickKey) {
     return;
   }
   if (quickKey.type === "history-page") {
-    const selected = currentSelectedSession();
-    if (shouldUsePaneWheel(selected)) {
-      sendQuickKeys([quickKey.value === "up" ? "WheelUpPane" : "WheelDownPane"]);
-    } else {
-      // Scroll tmux history via the server-side offset (xterm holds no scrollback)
-      const terminalSize = measureTerminalSize();
-      const step = Math.max(5, Math.floor((terminalSize?.rows ?? 30) * 0.8));
-      scrollOutputHistory(quickKey.value === "up" ? -step : step);
-    }
+    const wheelKey = quickKey.value === "up" ? "WheelUpPane" : "WheelDownPane";
+    const terminalSize = measureTerminalSize();
+    const step = Math.max(5, Math.floor((terminalSize?.rows ?? 30) * 0.8));
+    sendQuickKeys(Array.from({ length: step }, () => wheelKey));
     return;
   }
   sendQuickText(quickKey.value);
@@ -1262,7 +1402,11 @@ function renderSessionItem(session) {
           <span class="task-state ${phaseClass(session)}">${escapeHtml(phaseLabel(session))}</span>
           ${phase === "active"
             ? `<button class="session-action session-stop" type="button" title="${escapeHtml(t("stop"))}">${escapeHtml(t("stop"))}</button>`
-            : `<button class="session-action session-restart" type="button" title="${escapeHtml(t("restart"))}">${escapeHtml(t("restart"))}</button>`}
+            : `<button class="session-action session-restart" type="button" title="${escapeHtml(t("restart"))}">${escapeHtml(t("restart"))}</button>${
+                phase === "stopped"
+                  ? `<button class="session-action session-stop" type="button" title="${escapeHtml(t("stop"))}">${escapeHtml(t("stop"))}</button>`
+                  : ""
+              }`}
           <button class="session-action session-delete" type="button" title="${escapeHtml(t("delete"))}">${escapeHtml(t("delete"))}</button>
         </span>
       </span>
@@ -1342,7 +1486,6 @@ async function selectSession(session) {
   renderSessions();
   renderTaskAlert();
   renderQuickKeys();
-  closeSessionsPanel();
   if (session.status === "running") {
     state.outputScrollOffset = 0;
     clearOutputEtag(session.id);
@@ -1378,12 +1521,13 @@ function closeSessionsPanel() {
 function toggleSessionsPanel() {
   if (els.sessionsPanel.classList.contains("open")) {
     closeSessionsPanel();
-    return;
+  } else {
+    els.sessionsPanel.classList.add("open");
+    els.sessionsPanel.setAttribute("aria-hidden", "false");
+    els.openSessions.setAttribute("aria-expanded", "true");
+    refreshSessions();
   }
-  els.sessionsPanel.classList.add("open");
-  els.sessionsPanel.setAttribute("aria-hidden", "false");
-  els.openSessions.setAttribute("aria-expanded", "true");
-  refreshSessions();
+  refreshTerminalForLayoutChange();
 }
 
 function openAssistant() {
@@ -1515,6 +1659,9 @@ function applyLanguage() {
   document.querySelectorAll("[data-i18n]").forEach((element) => {
     element.textContent = text[element.dataset.i18n] ?? element.textContent;
   });
+  document.querySelectorAll("[data-i18n-title]").forEach((element) => {
+    element.title = text[element.dataset.i18nTitle] ?? element.title;
+  });
   els.openSessions.title = text.sessions;
   renderTaskAlert();
   els.openCreate.textContent = text.create;
@@ -1529,6 +1676,8 @@ function applyLanguage() {
   els.input.placeholder = text.sendPlaceholder;
   els.name.placeholder = text.namePlaceholder;
   els.cwd.placeholder = text.cwdPlaceholder;
+  els.cwdNewName.placeholder = text.newFolderNamePlaceholder;
+  renderCwdHint();
   els.project.placeholder = text.projectPlaceholder;
   els.nl.placeholder = text.nlPlaceholder;
   renderAssistantMessages();
@@ -1772,6 +1921,11 @@ function renderCompletedAlert() {
 }
 
 function recordTaskTransitions(sessions) {
+  const liveIds = new Set(sessions.map((session) => session.id));
+  state.completedAlerts = state.completedAlerts.filter(
+    (id) => liveIds.has(id) &&
+      sessions.find((session) => session.id === id)?.taskState === "completed"
+  );
   for (const session of sessions) {
     const previous = state.taskStates.get(session.id);
     if (

@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>风格预览 · 苹果风（macOS）</title>
+<style>
+  :root {
+    --bg: #e8eaee;
+    --group: rgba(255,255,255,.72);
+    --field: #ffffff;
+    --separator: #d8dae0;
+    --text: #1d1d1f;
+    --muted: #86868b;
+    --accent: #007aff;
+    --accent-soft: rgba(0,122,255,.12);
+    --amber: #f5a623;
+    --radius: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; overflow: hidden; color: var(--text);
+    background:
+      radial-gradient(1200px 700px at 15% -10%, #b9d4fb 0%, transparent 55%),
+      radial-gradient(1000px 600px at 110% 110%, #ffd6e0 0%, transparent 50%),
+      var(--bg);
+    font-size: 13px;
+  }
+  .window { margin: 28px auto; width: min(1080px, calc(100vw - 48px)); height: calc(100vh - 56px);
+    background: rgba(246,247,249,.8); backdrop-filter: blur(30px) saturate(180%);
+    border: 1px solid rgba(255,255,255,.6); border-radius: 12px;
+    box-shadow: 0 24px 70px rgba(20,30,50,.28); overflow: hidden;
+    display: grid; grid-template-rows: 52px 1fr;
+  }
+  .titlebar { display: flex; align-items: center; gap: 14px; padding: 0 16px;
+    border-bottom: 1px solid rgba(0,0,0,.08); background: rgba(246,247,249,.7); }
+  .lights { display: flex; gap: 8px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .lights i:nth-child(1){background:#ff5f57}.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+  .title { font-weight: 600; font-size: 13px; }
+  .titlebar .spacer { flex: 1; }
+  .content { display: grid; grid-template-columns: 240px 1fr; min-height: 0; }
+  .side { padding: 12px 10px; border-right: 1px solid rgba(0,0,0,.07); }
+  .side-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding: 6px 10px; }
+  .side-item { display: flex; align-items: center; gap: 9px; padding: 6px 10px; border-radius: 7px; cursor: pointer; }
+  .side-item.active { background: var(--accent); color: #fff; }
+  .side-item.active .muted { color: rgba(255,255,255,.8); }
+  .muted { color: var(--muted); margin-left: auto; font-size: 12px; }
+  .main { padding: 22px 26px; overflow-y: auto; }
+  .hero { font-size: 22px; font-weight: 700; letter-spacing: -.02em; margin: 2px 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 18px; }
+  button {
+    font: inherit; font-size: 13px; font-weight: 500; min-height: 30px; padding: 0 16px;
+    background: rgba(0,0,0,.05); color: var(--text); border: 0; border-radius: 8px; cursor: pointer;
+  }
+  button:hover { background: rgba(0,0,0,.09); }
+  button.primary { background: var(--accent); color: #fff; }
+  button.primary:hover { background: #0a84ff; }
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.25); backdrop-filter: blur(6px);
+    display: none; align-items: center; justify-content: center; z-index: 10; }
+  .overlay.show { display: flex; }
+  .modal { width: 480px; max-width: calc(100vw - 40px); max-height: 88vh;
+    background: rgba(248,248,250,.86); backdrop-filter: blur(40px) saturate(180%);
+    border: 1px solid rgba(255,255,255,.7); border-radius: 14px;
+    box-shadow: 0 30px 80px rgba(0,0,0,.35);
+    display: flex; flex-direction: column; overflow: hidden; }
+  .modal-head { display: flex; align-items: center; justify-content: center; position: relative;
+    padding: 14px 18px 10px; }
+  .modal-head h2 { margin: 0; font-size: 15px; font-weight: 700; }
+  .modal-head .close { position: absolute; left: 14px; top: 12px; width: 26px; height: 26px;
+    border-radius: 50%; background: rgba(0,0,0,.07); display: grid; place-items: center;
+    padding: 0; font-size: 13px; color: #555; }
+  .modal-body { padding: 6px 18px 16px; overflow-y: auto; display: grid; gap: 14px; }
+  .group { background: var(--group); border-radius: var(--radius); padding: 4px 14px;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.05); display: grid; gap: 0; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
+  .row + .row { border-top: 1px solid var(--separator); }
+  .row label { color: var(--text); flex: none; }
+  input, select {
+    font: inherit; font-size: 13px; min-height: 30px; padding: 4px 10px;
+    background: var(--field); color: var(--text); border: 1px solid var(--separator);
+    border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 4px var(--accent-soft); }
+  input.fill { width: 100%; }
+  .row input, .row select { margin-left: auto; text-align: right; }
+  .cwd-row { display: flex; gap: 8px; }
+  .cwd-row input { flex: 1; text-align: left; }
+  .browser { background: rgba(255,255,255,.7); border-radius: var(--radius); overflow: hidden;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.06); }
+  .browser-bar { display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+    border-bottom: 1px solid var(--separator); }
+  .browser-bar .path { flex: 1; font-size: 12px; color: var(--muted); }
+  .browser-list { max-height: 160px; min-height: 90px; overflow-y: auto; padding: 5px; display: grid; gap: 1px; }
+  .entry { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+    background: none; border-radius: 8px; color: var(--text); padding: 6px 10px; font-size: 13px;
+    border: 0; cursor: pointer; }
+  .entry:hover { background: rgba(0,0,0,.05); }
+  .entry.selected { background: var(--accent); color: #fff; }
+  .entry.selected svg { color: #fff; }
+  .entry svg { width: 15px; height: 15px; color: var(--amber); flex: none; }
+  .mk-row { display: flex; gap: 8px; padding: 9px 12px; border-top: 1px solid var(--separator); }
+  .mk-row input { flex: 1; }
+  .section-title { font-size: 12px; font-weight: 600; color: var(--muted); margin: 0 4px -6px; }
+  .switch { position: relative; width: 42px; height: 25px; margin-left: auto; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider-p { position: absolute; inset: 0; background: #d6d6dc; border-radius: 999px; transition: .2s; }
+  .slider-p::before { content: ""; position: absolute; width: 21px; height: 21px; left: 2px; top: 2px;
+    background: #fff; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,.25); transition: .2s; }
+  .switch input:checked + .slider-p { background: #34c759; }
+  .switch input:checked + .slider-p::before { transform: translateX(17px); }
+  .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 4px 18px 18px; }
+  .hint { margin: 0; font-size: 12px; color: var(--muted); }
+  .switcher { position: fixed; right: 16px; bottom: 14px; z-index: 20; display: flex; gap: 6px; }
+  .switcher a { background: rgba(255,255,255,.7); backdrop-filter: blur(20px); color: var(--text);
+    padding: 7px 13px; border-radius: 999px; text-decoration: none; font-size: 12px; font-weight: 500;
+    box-shadow: 0 4px 14px rgba(0,0,0,.12); }
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="titlebar">
+    <span class="lights"><i></i><i></i><i></i></span>
+    <span class="title">fuluk</span>
+    <span class="spacer"></span>
+    <button class="primary" onclick="document.getElementById('ov-create').classList.add('show')">新建会话</button>
+    <button onclick="document.getElementById('ov-config').classList.add('show')">配置</button>
+  </div>
+  <div class="content">
+    <aside class="side">
+      <div class="side-label">会话</div>
+      <div class="side-item active">🟢 codex-app <span class="muted">运行中</span></div>
+      <div class="side-item">🟢 claude-web <span class="muted">运行中</span></div>
+      <div class="side-item">⚪ runtime-box <span class="muted">已停止</span></div>
+    </aside>
+    <main class="main">
+      <div class="hero">工作区</div>
+      <p class="sub">点击右上角按钮预览「新建会话」和「配置」弹窗。</p>
+    </main>
+  </div>
+</div>
+
+<div class="overlay" id="ov-create">
+  <div class="modal">
+    <div class="modal-head"><button class="close" onclick="closeAll()">✕</button><h2>新建会话</h2></div>
+    <div class="modal-body">
+      <div class="group">
+        <div class="row"><label>类型</label><select><option>codex</option><option>claude</option><option>opencode</option><option>pi-os</option><option>runtime</option></select></div>
+        <div class="row"><label>会话名</label><input placeholder="codex-app" /></div>
+      </div>
+      <div class="section-title">工作目录</div>
+      <div class="cwd-row"><input value="/home/v6/work/codex-app" placeholder="~/work/…" /><button>浏览</button></div>
+      <div class="browser">
+        <div class="browser-bar"><button title="上一级">‹</button><span class="path">~/work</span></div>
+        <div class="browser-list">
+          <button class="entry selected"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.75C1.5 2.78 2.28 2 3.25 2h2.7c.48 0 .93.19 1.27.53L8.56 3.9h4.19c.97 0 1.75.78 1.75 1.75v5.6c0 .97-.78 1.75-1.75 1.75H3.25c-.97 0-1.75-.78-1.75-1.75V3.75Z"/></svg>CodeClip</button>
+          <button class="entry"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.75C1.5 2.78 2.28 2 3.25 2h2.7c.48 0 .93.19 1.27.53L8.56 3.9h4.19c.97 0 1.75.78 1.75 1.75v5.6c0 .97-.78 1.75-1.75 1.75H3.25c-.97 0-1.75-.78-1.75-1.75V3.75Z"/></svg>Session_Gateway</button>
+          <button class="entry"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.75C1.5 2.78 2.28 2 3.25 2h2.7c.48 0 .93.19 1.27.53L8.56 3.9h4.19c.97 0 1.75.78 1.75 1.75v5.6c0 .97-.78 1.75-1.75 1.75H3.25c-.97 0-1.75-.78-1.75-1.75V3.75Z"/></svg>Secure-AI</button>
+        </div>
+        <div class="mk-row"><input placeholder="新文件夹名" /><button>新建文件夹</button></div>
+      </div>
+      <p class="hint">严格模式：仅允许白名单内目录（~/work）</p>
+      <div class="group"><div class="row"><label>项目名</label><input placeholder="可选" /></div></div>
+    </div>
+    <div class="modal-footer"><button onclick="closeAll()">取消</button><button class="primary">新建</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="ov-config">
+  <div class="modal">
+    <div class="modal-head"><button class="close" onclick="closeAll()">✕</button><h2>配置</h2></div>
+    <div class="modal-body">
+      <div class="group">
+        <div class="row"><label>语言</label><select><option>中文</option><option>English</option></select></div>
+        <div class="row"><label>外观</label><select><option>浅色</option><option>深色</option></select></div>
+        <div class="row"><label>Bearer token</label><input type="password" placeholder="已配置" /></div>
+      </div>
+      <div class="section-title">助手与命令解析</div>
+      <div class="group">
+        <div class="row"><label>启用 web-pi 助手</label><label class="switch"><input type="checkbox" checked /><span class="slider-p"></span></label></div>
+        <div class="row"><label>AI 回退解析</label><label class="switch"><input type="checkbox" /><span class="slider-p"></span></label></div>
+        <div class="row"><input class="fill" placeholder="https://api.anthropic.com" /></div>
+        <div class="row"><input class="fill" placeholder="anthropic:claude-sonnet-4" /></div>
+        <div class="row"><input class="fill" type="password" placeholder="API key" /></div>
+      </div>
+      <div class="section-title">AI 眼镜认证</div>
+      <div class="group">
+        <div class="row"><label>🕶 glass-a3f2…</label><button style="margin-left:auto">批准</button></div>
+      </div>
+    </div>
+    <div class="modal-footer"><button onclick="closeAll()">取消</button><button class="primary">保存</button></div>
+  </div>
+</div>
+
+<div class="switcher">
+  <a href="ide-style.html">IDE 风</a>
+  <a href="codex-desktop-style.html">Codex 桌面</a>
+  <a href="apple-style.html">苹果风</a>
+</div>
+<script>function closeAll(){document.querySelectorAll('.overlay').forEach(o=>o.classList.remove('show'));}</script>
+</body>
+</html>

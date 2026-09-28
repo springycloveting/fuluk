@@ -165,6 +165,31 @@ test("TmuxBackend resize updates the tmux window size", async () => {
   ]);
 });
 
+test("TmuxBackend exists distinguishes a missing session from an access error", async () => {
+  const missingSession = new TmuxBackend(
+    { defaultRuntimeCommand: "/bin/bash" },
+    {
+      run: async () => {
+        throw new Error("Command failed: tmux has-session\ncan't find session gone");
+      }
+    }
+  );
+  assert.equal(
+    await missingSession.exists({ id: "s1", tmuxSessionName: "gone" }),
+    false
+  );
+
+  const accessDenied = new TmuxBackend(
+    { defaultRuntimeCommand: "/bin/bash" },
+    {
+      run: async () => {
+        throw new Error("Command failed: tmux has-session\nerror connecting to /tmp/tmux-1000/default (Operation not permitted)");
+      }
+    }
+  );
+  await assert.rejects(() => accessDenied.exists({ id: "s2", tmuxSessionName: "locked" }), /not permitted/);
+});
+
 test("TmuxBackend capture only falls back to alternate screen when current pane is empty", async () => {
   const calls = [];
   const outputs = ["   ", "\u001b[31malternate\u001b[0m"];
@@ -285,7 +310,11 @@ test("TmuxBackend sendKeys translates wheel keys into SGR mouse sequences at pan
     {
       run: async (command, args, timeoutMs) => {
         calls.push({ command, args, timeoutMs });
-        if (args[0] === "display-message") return { stdout: "120,40" };
+        if (args[0] === "display-message") {
+          if (args.some((a) => a.includes("#{pane_width}"))) return { stdout: "120,40" };
+          if (args.some((a) => a.includes("#{alternate_on}"))) return { stdout: "1\n" };
+          return { stdout: "" };
+        }
         return { stdout: "" };
       }
     }
@@ -304,6 +333,11 @@ test("TmuxBackend sendKeys translates wheel keys into SGR mouse sequences at pan
     {
       command: "tmux",
       args: ["has-session", "-t", "=opencode-work"],
+      timeoutMs: 3000
+    },
+    {
+      command: "tmux",
+      args: ["display-message", "-p", "-t", "=opencode-work:", "#{alternate_on}\n#{pane_mode}"],
       timeoutMs: 3000
     },
     {
@@ -329,7 +363,11 @@ test("TmuxBackend sendKeys splits plain keys and wheel keys into separate tmux c
     {
       run: async (command, args, timeoutMs) => {
         calls.push({ command, args, timeoutMs });
-        if (args[0] === "display-message") return { stdout: "100,30" };
+        if (args[0] === "display-message") {
+          if (args.some((a) => a.includes("#{pane_width}"))) return { stdout: "100,30" };
+          if (args.some((a) => a.includes("#{alternate_on}"))) return { stdout: "1\n" };
+          return { stdout: "" };
+        }
         return { stdout: "" };
       }
     }
@@ -357,6 +395,11 @@ test("TmuxBackend sendKeys splits plain keys and wheel keys into separate tmux c
     },
     {
       command: "tmux",
+      args: ["display-message", "-p", "-t", "=opencode-work:", "#{alternate_on}\n#{pane_mode}"],
+      timeoutMs: 3000
+    },
+    {
+      command: "tmux",
       args: ["display-message", "-p", "-t", "=opencode-work:", "#{pane_width},#{pane_height}"],
       timeoutMs: undefined
     },
@@ -368,6 +411,112 @@ test("TmuxBackend sendKeys splits plain keys and wheel keys into separate tmux c
   ]);
 });
 
+
+test("TmuxBackend sendKeys emulates wheel via copy-mode scroll commands", async () => {
+  const calls = [];
+  const tmux = new TmuxBackend(
+    {
+      defaultRuntimeCommand: "/bin/bash",
+      cliCommands: {}
+    },
+    {
+      run: async (command, args, timeoutMs) => {
+        calls.push({ command, args, timeoutMs });
+        if (args[0] === "display-message") {
+          return { stdout: args.includes("#{scroll_position}") ? "1" : "" };
+        }
+        return { stdout: "" };
+      }
+    }
+  );
+
+  await tmux.sendKeys(
+    {
+      id: "session-1",
+      kind: "codex",
+      tmuxSessionName: "codex-work"
+    },
+    ["WheelUpPane", "WheelDownPane"]
+  );
+
+  assert.deepEqual(calls, [
+    {
+      command: "tmux",
+      args: ["has-session", "-t", "=codex-work"],
+      timeoutMs: 3000
+    },
+    {
+      command: "tmux",
+      args: ["display-message", "-p", "-t", "=codex-work:", "#{alternate_on}\n#{pane_mode}"],
+      timeoutMs: 3000
+    },
+    {
+      command: "tmux",
+      args: ["display-message", "-p", "-t", "=codex-work:", "#{pane_mode}"],
+      timeoutMs: 3000
+    },
+    {
+      command: "tmux",
+      args: ["copy-mode", "-t", "=codex-work:"],
+      timeoutMs: undefined
+    },
+    {
+      command: "tmux",
+      args: ["send-keys", "-t", "=codex-work:", "-N", "1", "-X", "scroll-up"],
+      timeoutMs: undefined
+    },
+    {
+      command: "tmux",
+      args: ["send-keys", "-t", "=codex-work:", "-N", "1", "-X", "scroll-down"],
+      timeoutMs: undefined
+    },
+    {
+      command: "tmux",
+      args: ["display-message", "-p", "-t", "=codex-work:", "#{scroll_position}"],
+      timeoutMs: 3000
+    }
+  ]);
+});
+
+test("TmuxBackend capture follows the copy-mode viewport without a history range", async () => {
+  const calls = [];
+  const tmux = new TmuxBackend(
+    {
+      defaultRuntimeCommand: "/bin/bash",
+      cliCommands: {}
+    },
+    {
+      run: async (command, args) => {
+        calls.push({ command, args });
+        if (args[0] === "display-message") return { stdout: "copy-mode" };
+        if (args[0] === "capture-pane") return { stdout: "history viewport" };
+        return { stdout: "" };
+      }
+    }
+  );
+
+  const output = await tmux.capture(
+    { id: "session-1", kind: "codex", tmuxSessionName: "codex-work" },
+    30,
+    { preserveEscapes: true, followCopyMode: true }
+  );
+
+  assert.equal(output, "history viewport");
+  assert.deepEqual(calls, [
+    {
+      command: "tmux",
+      args: ["has-session", "-t", "=codex-work"]
+    },
+    {
+      command: "tmux",
+      args: ["display-message", "-p", "-t", "=codex-work:", "#{pane_mode}"]
+    },
+    {
+      command: "tmux",
+      args: ["capture-pane", "-ept", "=codex-work:"]
+    }
+  ]);
+});
 
 test("resumeTokenFor returns resume tokens for resumable kinds with an id", () => {
   assert.deepEqual(resumeTokenFor({ kind: "codex", cliSessionId: "7a3f1c9e-4b2a-4f1c-9d8e-1a2b3c4d5e6f" }), ["resume", "7a3f1c9e-4b2a-4f1c-9d8e-1a2b3c4d5e6f"]);

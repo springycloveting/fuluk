@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>风格预览 · IDE 工具风（VS Code）</title>
+<style>
+  :root {
+    --bg: #1e1e1e;
+    --activity: #333333;
+    --side: #252526;
+    --panel: #2d2d30;
+    --panel-2: #3c3c3c;
+    --border: #3f3f46;
+    --border-strong: #525257;
+    --text: #cccccc;
+    --text-strong: #ffffff;
+    --muted: #858585;
+    --accent: #0e639c;
+    --accent-hover: #1177bb;
+    --focus: #007fd4;
+    --input: #3c3c3c;
+    --radius: 4px;
+    --mono: "Cascadia Code", "JetBrains Mono", Consolas, Menlo, monospace;
+    --sans: -apple-system, "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font: 13px var(--sans);
+  }
+  /* fake app shell */
+  .shell { display: grid; grid-template-columns: 48px 260px 1fr; height: 100%; }
+  .activity-bar { background: var(--activity); display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 6px; }
+  .activity-bar .ico { width: 48px; height: 48px; display: grid; place-items: center; color: var(--muted); border-left: 2px solid transparent; cursor: pointer; }
+  .activity-bar .ico.active { color: #fff; border-left-color: #fff; }
+  .sidebar { background: var(--side); border-right: 1px solid var(--border); padding: 8px; }
+  .side-title { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 4px 8px; }
+  .side-item { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: var(--radius); cursor: pointer; }
+  .side-item.active { background: #37373d; }
+  .side-dot { width: 8px; height: 8px; border-radius: 50%; background: #6a9955; }
+  .main { display: grid; grid-template-rows: 35px 1fr; background: var(--bg); }
+  .tabs { display: flex; background: var(--side); border-bottom: 1px solid var(--border); }
+  .tab { padding: 0 16px; display: flex; align-items: center; gap: 8px; background: var(--bg); border-right: 1px solid var(--border); font-size: 13px; }
+  .tab .dirty { width: 8px; height: 8px; border-radius: 50%; background: #fff; }
+  .editor { padding: 16px 24px; font-family: var(--mono); font-size: 13px; line-height: 1.7; color: #9cdcfe; }
+  .ln { color: #858585; display: inline-block; width: 36px; user-select: none; }
+  .toolbar-preview { padding: 12px 24px; }
+  .toolbar-preview button { margin-right: 8px; }
+  /* buttons */
+  button {
+    font: inherit; border-radius: var(--radius); padding: 0 14px; min-height: 30px;
+    border: 1px solid var(--border-strong); cursor: pointer;
+    background: var(--panel-2); color: var(--text);
+  }
+  button:hover { background: #454548; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { background: var(--accent-hover); }
+  /* overlay */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 10; }
+  .overlay.show { display: flex; }
+  .modal {
+    width: 520px; max-width: calc(100vw - 32px); max-height: 86vh;
+    background: var(--panel); border: 1px solid var(--border);
+    box-shadow: 0 8px 28px rgba(0,0,0,.55);
+    display: flex; flex-direction: column;
+  }
+  .modal-titlebar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; font-size: 12px; color: var(--muted);
+    border-bottom: 1px solid var(--border); background: var(--side);
+  }
+  .modal-titlebar h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-strong); }
+  .modal-body { padding: 16px; overflow-y: auto; display: grid; gap: 14px; }
+  label.field { display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+  label.field > span { display: flex; justify-content: space-between; }
+  input, select {
+    font: 13px var(--sans); min-height: 30px; padding: 4px 8px;
+    background: var(--input); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  input:focus, select:focus { outline: 1px solid var(--focus); border-color: var(--focus); }
+  input.mono { font-family: var(--mono); font-size: 12px; }
+  .cwd-row { display: flex; gap: 8px; }
+  .cwd-row input { flex: 1; }
+  .browser { background: var(--side); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; display: grid; gap: 8px; }
+  .browser-bar { display: flex; align-items: center; gap: 6px; }
+  .browser-bar .path { flex: 1; font-family: var(--mono); font-size: 11px; background: var(--input); border: 1px solid var(--border); border-radius: 3px; padding: 4px 8px; color: #9cdcfe; }
+  .browser-list { max-height: 160px; min-height: 90px; overflow-y: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 3px; display: grid; gap: 1px; }
+  .entry { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none; border: 1px solid transparent; border-radius: 3px; color: var(--text); padding: 4px 8px; font-size: 12px; cursor: pointer; }
+  .entry:hover { background: #04395e; }
+  .entry.selected { background: #094771; border-color: var(--focus); }
+  .entry svg { width: 14px; height: 14px; color: #dcb67a; flex: none; }
+  .mk-row { display: flex; gap: 8px; }
+  .mk-row input { flex: 1; }
+  fieldset { border: 1px solid var(--border); border-radius: var(--radius); margin: 0; padding: 12px; display: grid; gap: 10px; }
+  legend { font-size: 12px; color: var(--text); padding: 0 6px; }
+  small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); }
+  .check input { min-height: 0; }
+  .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--side); }
+  .hint { margin: 0; font-size: 11px; color: #dcdcaa; }
+  .switcher { position: fixed; right: 12px; bottom: 12px; z-index: 20; display: flex; gap: 6px; }
+  .switcher a { background: rgba(255,255,255,.08); border: 1px solid var(--border-strong); color: var(--text); padding: 6px 10px; border-radius: var(--radius); text-decoration: none; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="activity-bar">
+    <div class="ico active">📄</div><div class="ico">🔍</div><div class="ico">🌿</div><div class="ico">🐞</div><div class="ico">⚙️</div>
+  </div>
+  <div class="sidebar">
+    <div class="side-title">资源管理器</div>
+    <div class="side-item active"><span class="side-dot"></span> codex-app</div>
+    <div class="side-item"><span class="side-dot"></span> claude-web</div>
+    <div class="side-item"><span class="side-dot" style="background:#888"></span> runtime-box</div>
+  </div>
+  <div class="main">
+    <div class="tabs"><div class="tab"><span class="dirty"></span> codex-app</div><div class="tab">README.md</div></div>
+    <div>
+      <div class="toolbar-preview">
+        <button class="primary" onclick="document.getElementById('ov-create').classList.add('show')">新建会话</button>
+        <button onclick="document.getElementById('ov-config').classList.add('show')">配置</button>
+      </div>
+      <div class="editor"><span class="ln">1</span>$ fuluk gateway --listen 127.0.0.1:8787<br><span class="ln">2</span><span style="color:#6a9955">// 点击上方按钮预览弹窗</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="ov-create">
+  <div class="modal">
+    <div class="modal-titlebar"><h2>新建会话</h2><button onclick="closeAll()">关闭</button></div>
+    <div class="modal-body">
+      <label class="field"><span>会话类型</span>
+        <select><option>codex</option><option>claude</option><option>opencode</option><option>pi-os</option><option>runtime</option></select>
+      </label>
+      <label class="field"><span>会话名</span><input placeholder="例如 codex-app" /></label>
+      <label class="field"><span>工作目录</span>
+        <div class="cwd-row"><input class="mono" placeholder="留空使用默认目录" value="/home/v6/work/codex-app" /><button>浏览</button></div>
+      </label>
+      <div class="browser">
+        <div class="browser-bar">
+          <button title="上一级">‹</button>
+          <span class="path">/home/v6/work</span>
+        </div>
+        <div class="browser-list">
+          <button class="entry selected"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.75C1.5 2.78 2.28 2 3.25 2h2.7c.48 0 .93.19 1.27.53L8.56 3.9h4.19c.97 0 1.75.78 1.75 1.75v5.6c0 .97-.78 1.75-1.75 1.75H3.25c-.97 0-1.75-.78-1.75-1.75V3.75Z"/></svg><span>CodeClip</span></button>
+          <button class="entry"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.75C1.5 2.78 2.28 2 3.25 2h2.7c.48 0 .93.19 1.27.53L8.56 3.9h4.19c.97 0 1.75.78 1.75 1.75v5.6c0 .97-.78 1.75-1.75 1.75H3.25c-.97 0-1.75-.78-1.75-1.75V3.75Z"/></svg><span>Session_Gateway</span></button>
+          <button class="entry"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.75C1.5 2.78 2.28 2 3.25 2h2.7c.48 0 .93.19 1.27.53L8.56 3.9h4.19c.97 0 1.75.78 1.75 1.75v5.6c0 .97-.78 1.75-1.75 1.75H3.25c-.97 0-1.75-.78-1.75-1.75V3.75Z"/></svg><span>Secure-AI</span></button>
+        </div>
+        <div class="mk-row"><input class="mono" placeholder="新文件夹名" /><button>新建文件夹</button></div>
+      </div>
+      <p class="hint">严格模式：仅允许白名单内目录：/home/v6/work</p>
+      <label class="field"><span>项目名</span><input placeholder="可选" /></label>
+    </div>
+    <div class="modal-footer"><button onclick="closeAll()">取消</button><button class="primary">新建</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="ov-config">
+  <div class="modal">
+    <div class="modal-titlebar"><h2>配置 · settings.json</h2><button onclick="closeAll()">关闭</button></div>
+    <div class="modal-body">
+      <label class="field"><span>语言</span><select><option>中文</option><option>English</option></select></label>
+      <label class="field"><span>主题</span><select><option>深色</option><option>浅色</option></select></label>
+      <label class="field"><span>Bearer token</span><input type="password" placeholder="SESSION_GATEWAY_TOKEN" /></label>
+      <fieldset>
+        <legend>助手与命令解析</legend>
+        <small>格式 provider:model-id，例如 anthropic:claude-sonnet-4</small>
+        <label class="check"><input type="checkbox" checked /> 启用 web-pi AI 助手</label>
+        <label class="check"><input type="checkbox" /> 规则失败时用 AI 回退解析</label>
+        <input class="mono" placeholder="https://api.anthropic.com" />
+        <input class="mono" placeholder="anthropic:claude-sonnet-4" />
+        <input type="password" placeholder="API key" />
+      </fieldset>
+      <fieldset>
+        <legend>AI 眼镜认证</legend>
+        <small>眼镜端语音输入地址后在此批准配对。</small>
+        <div class="entry" style="cursor:default">🕶️ glass-a3f2… <button style="margin-left:auto">批准</button></div>
+      </fieldset>
+    </div>
+    <div class="modal-footer"><button onclick="closeAll()">取消</button><button class="primary">保存</button></div>
+  </div>
+</div>
+
+<div class="switcher">
+  <a href="ide-style.html">IDE 风</a>
+  <a href="codex-desktop-style.html">Codex 桌面</a>
+  <a href="apple-style.html">苹果风</a>
+</div>
+<script>function closeAll(){document.querySelectorAll('.overlay').forEach(o=>o.classList.remove('show'));}</script>
+</body>
+</html>

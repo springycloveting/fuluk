@@ -227,26 +227,6 @@ class GatewayClient {
         const JsonEncoder.withIndent("  ").convert(body);
   }
 
-  Future<void> configureNtfy() async {
-    final server = config.ntfyServer.trim().replaceAll(RegExp(r"/+$"), "");
-    final response = await http.put(_uri("/api/config"),
-        headers: _headers,
-        body: jsonEncode({
-          "settings": {
-            "notifications": {
-              "ntfy": {
-                "server": server,
-                "topic": config.ntfyTopic.trim(),
-                "token": config.ntfyToken.trim(),
-                "enabled": true
-              }
-            }
-          }
-        }));
-    if (response.statusCode != 200) {
-      throw Exception("写入 ntfy 配置失败 (${response.statusCode})");
-    }
-  }
 }
 
 Future<String> transcribeAudio(AppConfig config, String audioPath) async {

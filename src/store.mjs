@@ -64,6 +64,9 @@ export class SessionStore {
       .prepare("delete from output_snapshots where session_id = ?")
       .run(id);
     this.db
+      .prepare("delete from session_hook_state where session_id = ?")
+      .run(id);
+    this.db
       .prepare(
         `update sessions
          set kind = ?,
@@ -128,6 +131,54 @@ export class SessionStore {
       .run(cliSessionId, nowIso(), id);
   }
 
+  upsertHookState(sessionId, state, options = {}) {
+    const timestamp = options.at ?? nowIso();
+    this.db
+      .prepare(
+        `insert into session_hook_state (session_id, state, event_name, detail, updated_at)
+         values (?, ?, ?, ?, ?)
+         on conflict(session_id) do update set
+           state = excluded.state,
+           event_name = excluded.event_name,
+           detail = excluded.detail,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        sessionId,
+        state,
+        options.eventName ?? null,
+        options.detail ?? "",
+        timestamp
+      );
+    return this.getHookState(sessionId);
+  }
+
+  getHookState(sessionId) {
+    const row = this.db
+      .prepare("select * from session_hook_state where session_id = ?")
+      .get(sessionId);
+    return row ? mapHookStateRow(row) : null;
+  }
+
+  findByCliSessionId(kind, cliSessionId) {
+    const row = this.db
+      .prepare("select * from sessions where kind = ? and cli_session_id = ? limit 1")
+      .get(kind, cliSessionId);
+    return row ? mapSessionRow(row) : null;
+  }
+
+  findRunningByCwd(kind, cwd) {
+    const row = this.db
+      .prepare(
+        `select * from sessions
+         where kind = ? and cwd = ? and status = 'running'
+         order by updated_at desc, created_at desc
+         limit 1`
+      )
+      .get(kind, cwd);
+    return row ? mapSessionRow(row) : null;
+  }
+
   touch(id) {
     this.db.prepare("update sessions set updated_at = ? where id = ?").run(nowIso(), id);
   }
@@ -164,16 +215,24 @@ export class SessionStore {
     };
   }
 
-  latestOutputSnapshot(sessionId) {
-    const row = this.db
-      .prepare("select * from output_snapshots where session_id = ? order by id desc limit 1")
-      .get(sessionId);
+  latestOutputSnapshot(sessionId, options = {}) {
+    const limitLines = options.lines;
+    const row = limitLines
+      ? this.db
+          .prepare(
+            "select * from output_snapshots where session_id = ? and lines = ? order by id desc limit 1"
+          )
+          .get(sessionId, limitLines)
+      : this.db
+          .prepare("select * from output_snapshots where session_id = ? order by id desc limit 1")
+          .get(sessionId);
     return row ? mapOutputSnapshotRow(row) : null;
   }
 
   delete(id) {
     this.db.prepare("delete from input_history where session_id = ?").run(id);
     this.db.prepare("delete from output_snapshots where session_id = ?").run(id);
+    this.db.prepare("delete from session_hook_state where session_id = ?").run(id);
     const result = this.db.prepare("delete from sessions where id = ?").run(id);
     return result.changes > 0;
   }
@@ -248,6 +307,14 @@ export class SessionStore {
         created_at text not null
       );
 
+      create table if not exists session_hook_state (
+        session_id text primary key references sessions(id) on delete cascade,
+        state text not null,
+        event_name text,
+        detail text,
+        updated_at text not null
+      );
+
       create index if not exists idx_output_snapshots_session_id_id
         on output_snapshots(session_id, id desc);
 
@@ -256,6 +323,9 @@ export class SessionStore {
 
       create index if not exists idx_input_history_created_at
         on input_history(created_at desc);
+
+      create index if not exists idx_session_hook_state_updated_at
+        on session_hook_state(updated_at desc);
     `);
     this.ensureColumn("sessions", "cli_session_id", "text");
   }
@@ -322,5 +392,15 @@ function mapOutputSnapshotRow(row) {
     capturedAt: row.captured_at,
     lines: row.lines,
     text: row.text
+  };
+}
+
+function mapHookStateRow(row) {
+  return {
+    sessionId: row.session_id,
+    state: row.state,
+    eventName: row.event_name,
+    detail: row.detail ?? "",
+    updatedAt: row.updated_at
   };
 }

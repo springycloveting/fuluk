@@ -5,11 +5,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseWithLocalModel } from "./ai_parser.mjs";
 import { loadConfig, updateRuntimeSettings } from "./config.mjs";
+import { assertCwdAllowed, createDirectory, listDirectories } from "./cwd_policy.mjs";
 import { isAuthorizedHeader } from "./auth.mjs";
 import { parseNaturalCommand } from "./nl.mjs";
 import { createSessionAgentManager } from "./session_agent.mjs";
 import { SessionStore } from "./store.mjs";
-import { TmuxBackend } from "./tmux.mjs";
+import { TmuxBackend, tmuxWheelAction } from "./tmux.mjs";
 import { newId, normalizeLines, outputEtag, readJsonBody, sanitizeTmuxName } from "./utils.mjs";
 import {
   captureCliSessionId,
@@ -20,6 +21,7 @@ import {
 } from "./session_resume.mjs";
 import { findPrompt, hasConfirmationPrompt } from "./prompt.mjs";
 import { GlassPairingStore } from "./glass_pairing.mjs";
+import { normalizeHookEvent, isHookKind } from "./hooks.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "..", "public");
@@ -86,9 +88,10 @@ export function createSessionGatewayServer(options = {}) {
   };
   const scheduleNotificationPoll = () => {
     clearTimeout(notificationPollTimer);
-    const hasWebhook = Boolean(config.notificationWebhookUrl || config.runtimeSettings?.notifications?.webhookUrl);
-    const hasWebSocketClients = typeof eventHub.hasClients === "function" && eventHub.hasClients();
-    if (!hasWebhook && !hasWebSocketClients) return;
+  const hasWebhook = Boolean(config.notificationWebhookUrl || config.runtimeSettings?.notifications?.webhookUrl);
+  const hasNtfy = Boolean(config.runtimeSettings?.notifications?.ntfy?.enabled);
+  const hasWebSocketClients = typeof eventHub.hasClients === "function" && eventHub.hasClients();
+  if (!hasWebhook && !hasNtfy && !hasWebSocketClients) return;
     if (config.notificationPollMs <= 0) return;
     notificationPollTimer = setTimeout(async () => {
       await pollNotifications();
@@ -242,6 +245,24 @@ async function handleApi(req, res, url, context) {
     return;
   }
 
+  if (method === "POST" && pathname.startsWith("/api/hooks/")) {
+    const kind = decodeURIComponent(pathname.slice("/api/hooks/".length));
+    await handleHookIngestion(kind, req, res, context);
+    return;
+  }
+
+  if (method === "GET" && pathname === "/api/fs/browse") {
+    const dir = url.searchParams.get("dir") || config.defaultCwd;
+    sendJson(res, 200, listDirectories(dir, config));
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/fs/mkdir") {
+    const body = await readJsonBody(req);
+    sendJson(res, 201, createDirectory(body, config));
+    return;
+  }
+
   if (
     pathname === "/api/glass/pending" ||
     pathname === "/api/glass/keys" ||
@@ -272,7 +293,15 @@ async function handleApi(req, res, url, context) {
   }
 
   if (method === "GET" && pathname === "/api/config") {
-    sendJson(res, 200, { settings: config.runtimeSettings, enabled: config.runtimeSettingsEnabled });
+    sendJson(res, 200, {
+      settings: config.runtimeSettings,
+      enabled: config.runtimeSettingsEnabled,
+      cwdPolicy: {
+        defaultCwd: config.defaultCwd,
+        allowedCwds: config.allowedCwds,
+        strictCwd: config.strictCwd
+      }
+    });
     return;
   }
 
@@ -314,8 +343,8 @@ async function handleSessionAction(req, res, url, method, idOrName, action, cont
     const offset = normalizeOutputOffset(url.searchParams.get("offset"));
     const raw = url.searchParams.get("raw") === "1";
     const captureOptions = raw
-      ? { preserveEscapes: true, alternateScreen: true, offset }
-      : { offset };
+      ? { preserveEscapes: true, alternateScreen: true, offset, followCopyMode: offset === 0 }
+      : { offset, followCopyMode: offset === 0 };
     const text = await tmux.capture(session, lines, captureOptions);
     const etag = outputEtag(text, String(lines) + ":" + String(offset));
     if (url.searchParams.get("format") === "json") {
@@ -360,6 +389,7 @@ async function handleSessionAction(req, res, url, method, idOrName, action, cont
     await tmux.send(session, body.text);
     store.saveInput(session.id, body.text);
     store.touch(session.id);
+    context.sessionViewEvents?.delete(session.id);
     if ((session.kind === "claude" || session.kind === "opencode") && !session.cliSessionId) {
       setTimeout(() => {
         captureCliSessionId(session.id, context).catch(() => {});
@@ -373,6 +403,10 @@ async function handleSessionAction(req, res, url, method, idOrName, action, cont
     const body = await readJsonBody(req);
     const keys = parseTmuxKeys(body.keys);
     await tmux.sendKeys(session, keys);
+    if (keys.some((key) => tmuxWheelAction(key) !== null)) {
+      context.sessionViewEvents ??= new Map();
+      context.sessionViewEvents.set(session.id, Date.now());
+    }
     store.touch(session.id);
     sendJson(res, 200, { ok: true });
     return;
@@ -382,6 +416,8 @@ async function handleSessionAction(req, res, url, method, idOrName, action, cont
     const body = await readJsonBody(req);
     const size = parseTmuxSize(body);
     await tmux.resize(session, size.cols, size.rows);
+    context.sessionViewEvents ??= new Map();
+    context.sessionViewEvents.set(session.id, Date.now());
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -910,7 +946,8 @@ function commandHelpText() {
 
 async function createSession(input, context) {
   const { store, tmux } = context;
-  const preparedInput = prepareCreateInput(input);
+  const preparedInput = prepareCreateInput(input, context.config);
+  assertCwdAllowed(preparedInput.cwd, context.config);
   const commandSpec = tmux.resolveCreateCommand(preparedInput);
   await tmux.ensureAvailable();
   const existingSession = findExistingNamedSession(preparedInput, context);
@@ -938,7 +975,7 @@ async function createSession(input, context) {
   }
 }
 
-function prepareCreateInput(input) {
+function prepareCreateInput(input, config) {
   const name = input.name?.trim() || `${input.kind}-${newId().slice(0, 8)}`;
   if (typeof input.cwd === "string" && input.cwd.trim()) {
     return { ...input, name, cwd: input.cwd.trim() };
@@ -947,17 +984,25 @@ function prepareCreateInput(input) {
   return {
     ...input,
     name,
-    cwd: defaultCwdForSession(name)
+    cwd: defaultCwdForSession(name, config)
   };
 }
 
-function defaultCwdForSession(name) {
-  return path.posix.join("/home/v6/work", sanitizeTmuxName(name));
+function defaultCwdForSession(name, config) {
+  const root = config?.defaultCwd ?? "/home/v6/work";
+  return path.posix.join(root, sanitizeTmuxName(name));
 }
 
 async function refreshStatuses(sessions, { store, tmux }) {
   for (const session of sessions) {
-    const exists = await tmux.exists(session);
+    let exists;
+    try {
+      exists = await tmux.exists(session);
+    } catch {
+      // tmux server unreachable for access reasons (permissions, sandbox):
+      // keep the persisted status instead of overwriting it with stopped.
+      continue;
+    }
     const nextStatus = exists ? "running" : "stopped";
     if (nextStatus !== session.status) store.updateStatus(session.id, nextStatus);
   }
@@ -966,33 +1011,59 @@ async function refreshStatuses(sessions, { store, tmux }) {
 
 async function listSessionsWithTaskState(context) {
   const sessions = await refreshStatuses(context.store.list(), context);
-  const annotated = await annotateSessionsTaskState(sessions, context);
+  const now = Date.now();
+  const previousPollAt = context.lastTaskPollAt;
+  context.lastTaskPollAt = now;
+  const idleSuppressed =
+    previousPollAt !== undefined && now - previousPollAt >= IDLE_OUTPUT_STOPPED_MS;
+  const annotated = await annotateSessionsTaskState(sessions, context, { idleSuppressed });
+  await resolvePendingHookEvents(context);
   await dispatchSessionTaskTransitions(annotated, context);
   return annotated;
 }
 
-async function annotateSessionsTaskState(sessions, context) {
+async function annotateSessionsTaskState(sessions, context, options = {}) {
   const { store, tmux } = context;
   const annotated = [];
   for (const session of sessions) {
-    let snapshot = typeof store.latestOutputSnapshot === "function" ? store.latestOutputSnapshot(session.id) : null;
+    let snapshot =
+      typeof store.latestOutputSnapshot === "function"
+        ? store.latestOutputSnapshot(session.id, { lines: SESSION_LIST_OUTPUT_LINES })
+        : null;
     let output = snapshot?.text ?? "";
+    let captureFailed = false;
+    const previousCapturedAt = snapshot?.capturedAt;
+    let screenChanged = false;
     if (session.status === "running" && typeof tmux.capture === "function") {
       try {
         const captured = await tmux.capture(session, SESSION_LIST_OUTPUT_LINES);
-        if (captured !== output && typeof store.saveOutput === "function") {
+        const sameScreen =
+          snapshot != null && screenOutputEqual(snapshot.text, captured);
+        screenChanged = !sameScreen;
+        if (!sameScreen && typeof store.saveOutput === "function") {
           snapshot = store.saveOutput(session.id, SESSION_LIST_OUTPUT_LINES, captured, { touch: false });
         }
         output = captured;
       } catch {
-        // Keep the status list useful even if one tmux pane cannot be captured.
+        // Keep the status list useful even if one tmux pane cannot be captured,
+        // but do not use a stale snapshot to conclude the session is idle.
+        captureFailed = true;
       }
     }
     if (isResumableKind(session.kind) && !session.cliSessionId) {
       await captureCliSessionId(session.id, context, { output });
     }
-    const taskState = detectTaskState(session, output, snapshot);
-    const finalTaskState = applyCompletedStickiness(taskState, session, context);
+    const taskState = detectTaskState(session, output, snapshot, {
+      captureFailed,
+      idleSuppressed: options.idleSuppressed === true,
+      sameScreen: snapshot != null && screenOutputEqual(snapshot.text, output),
+      previousTaskState: context.sessionTaskStates?.get(session.id)?.state,
+      hookState: typeof store.getHookState === "function" ? store.getHookState(session.id) : null
+    });
+    const finalTaskState = applyViewEventGuard(taskState, session, context, {
+      screenChanged,
+      previousCapturedAt
+    });
     annotated.push({
       ...session,
       taskState: finalTaskState,
@@ -1002,20 +1073,118 @@ async function annotateSessionsTaskState(sessions, context) {
   return annotated;
 }
 
-function applyCompletedStickiness(taskState, session, context) {
-  if (taskState !== "in_progress") return taskState;
-  const previous = context.sessionTaskStates?.get(session.id);
-  if (previous?.state !== "completed") return taskState;
-  const lastSentAt = Date.parse(session.updatedAt);
-  const hasNewInput = Number.isFinite(lastSentAt) && lastSentAt > previous.at;
-  return hasNewInput ? taskState : "completed";
+function applyViewEventGuard(taskState, session, context, details) {
+  if (taskState !== "in_progress" || !details.screenChanged) return taskState;
+  if (context.sessionTaskStates?.get(session.id)?.state !== "completed") return taskState;
+  const viewEventAt = context.sessionViewEvents?.get(session.id);
+  if (!Number.isFinite(viewEventAt)) return taskState;
+  const previousAt = Date.parse(details.previousCapturedAt);
+  if (!Number.isFinite(previousAt) || viewEventAt <= previousAt) return taskState;
+  // The only event since the previous capture was a view interaction (a pane
+  // resize or wheel scroll), which makes an idle full-screen TUI redraw without
+  // any new user input. Keep the completed state for this cycle.
+  return "completed";
 }
 
-function detectTaskState(session, output, snapshot) {
+function detectTaskState(session, output, snapshot, options = {}) {
   if (session.status !== "running") return "completed";
+  const hookState = options.hookState;
+  if (hookState) {
+    const hookAt = Date.parse(hookState.updatedAt);
+    const activityAt = Date.parse(session.updatedAt);
+    // Input sent through the gateway after the hook fired means the task is
+    // active again even if the CLI has not reported a new event yet.
+    const resumedHere =
+      Number.isFinite(hookAt) &&
+      Number.isFinite(activityAt) &&
+      activityAt > hookAt &&
+      hookState.state !== "in_progress";
+    return resumedHere ? "in_progress" : hookState.state;
+  }
+  if (options.captureFailed || options.idleSuppressed) {
+    return options.previousTaskState ?? "in_progress";
+  }
   if (hasConfirmationPrompt(output)) return "needs_confirmation";
-  if (isOutputIdle(snapshot)) return "completed";
+  if (options.sameScreen && isOutputIdle(snapshot)) return "completed";
   return "in_progress";
+}
+
+function screenOutputEqual(previousText, nextText) {
+  return String(previousText ?? "").replace(/\s+$/u, "") === String(nextText ?? "").replace(/\s+$/u, "");
+}
+
+async function handleHookIngestion(kind, req, res, context) {
+  const body = await readJsonBody(req);
+  if (!isHookKind(kind)) throw new Error(`unsupported hook kind: ${kind}`);
+  const event = normalizeHookEvent(kind, body);
+  if (!event) {
+    sendJson(res, 200, { ok: true, ignored: true });
+    return;
+  }
+  const session = await applyHookEvent(event, context);
+  if (!session) {
+    sendJson(res, 202, { ok: true, pending: true });
+    return;
+  }
+  sendJson(res, 200, { ok: true, sessionId: session.id, taskState: event.taskState });
+}
+
+async function applyHookEvent(event, context) {
+  const session = resolveHookSession(event, context.store);
+  if (!session) {
+    if (!context.pendingHookEvents) context.pendingHookEvents = [];
+    context.pendingHookEvents.push(event);
+    if (context.pendingHookEvents.length > 100) context.pendingHookEvents.shift();
+    return null;
+  }
+  context.store.upsertHookState(session.id, event.taskState, {
+    at: event.at,
+    eventName: event.eventName,
+    detail: event.detail
+  });
+  const annotatedSession = {
+    ...session,
+    taskState: event.taskState,
+    phase: sessionPhase({ ...session, taskState: event.taskState })
+  };
+  await dispatchSessionTaskTransitions([annotatedSession], context);
+  return session;
+}
+
+function resolveHookSession(event, store) {
+  if (event.cliSessionId) {
+    const direct = store.findByCliSessionId(event.kind, event.cliSessionId);
+    if (direct) return direct;
+  }
+  if (event.cwd) {
+    const byCwd = store.findRunningByCwd(event.kind, event.cwd);
+    if (byCwd) {
+      if (event.cliSessionId && !byCwd.cliSessionId) {
+        store.setCliSessionId(byCwd.id, event.cliSessionId);
+      }
+      return byCwd;
+    }
+  }
+  return null;
+}
+
+async function resolvePendingHookEvents(context) {
+  const pending = context.pendingHookEvents;
+  if (!pending?.length) return;
+  const remaining = [];
+  for (const event of pending) {
+    const session = resolveHookSession(event, context.store);
+    if (!session) {
+      remaining.push(event);
+      continue;
+    }
+    context.store.upsertHookState(session.id, event.taskState, {
+      at: event.at,
+      eventName: event.eventName,
+      detail: event.detail
+    });
+  }
+  context.pendingHookEvents = remaining;
 }
 
 function isOutputIdle(snapshot) {
@@ -1028,20 +1197,40 @@ function isOutputIdle(snapshot) {
 async function dispatchSessionTaskTransitions(sessions, context) {
   if (!context.sessionTaskStates) context.sessionTaskStates = new Map();
   const notifications = [];
+  const cancellations = [];
   for (const session of sessions) {
     const previousEntry = context.sessionTaskStates.get(session.id);
     const previousTaskState = previousEntry?.state;
     const enteredAt =
       previousEntry && previousEntry.state === session.taskState ? previousEntry.at : Date.now();
-    context.sessionTaskStates.set(session.id, { state: session.taskState, at: enteredAt });
-    if (!shouldNotifyTaskTransition(previousTaskState, session.taskState)) continue;
-    notifications.push({
+    const inputChanged =
+      previousEntry &&
+      session.updatedAt !== undefined &&
+      previousEntry.lastUpdatedAt !== undefined &&
+      session.updatedAt !== previousEntry.lastUpdatedAt;
+    let awaitingConfirmation = previousEntry?.awaitingConfirmation === true;
+    if (inputChanged) awaitingConfirmation = false;
+    if (session.taskState === "needs_confirmation") awaitingConfirmation = true;
+    context.sessionTaskStates.set(session.id, {
+      state: session.taskState,
+      at: enteredAt,
+      awaitingConfirmation,
+      lastUpdatedAt: session.updatedAt
+    });
+    const event = {
       type: "session_task_state_changed",
       session,
       previousTaskState,
       taskState: session.taskState,
       changedAt: new Date().toISOString()
-    });
+    };
+    if (
+      shouldNotifyTaskTransition(previousTaskState, session.taskState) &&
+      !(session.taskState === "completed" && awaitingConfirmation)
+    ) {
+      notifications.push(event);
+    }
+    if (shouldCancelStoppedNotification(previousTaskState, session.taskState)) cancellations.push(event);
   }
 
   for (const event of notifications) {
@@ -1049,10 +1238,17 @@ async function dispatchSessionTaskTransitions(sessions, context) {
     await sendSessionWebhook(event, context);
     await sendNtfyNotification(event, context);
   }
+  for (const event of cancellations) {
+    await cancelNtfyStoppedNotification(event, context);
+  }
 }
 
 function shouldNotifyTaskTransition(previousTaskState, taskState) {
   return previousTaskState === "in_progress" && (taskState === "completed" || taskState === "needs_confirmation");
+}
+
+function shouldCancelStoppedNotification(previousTaskState, taskState) {
+  return previousTaskState === "completed" && taskState !== "completed";
 }
 
 async function sendSessionWebhook(event, { config, fetchImpl = fetch }) {
@@ -1074,13 +1270,14 @@ async function sendNtfyNotification(event, { config, tmux, fetchImpl = fetch }) 
   if (!ntfy?.enabled) return;
   const session = event.session;
   const needsConfirm = event.taskState === "needs_confirmation";
-  const message = `${session.name} ${needsConfirm ? "等待确认" : "已完成"}`;
+  const message = `${session.name} ${needsConfirm ? "等待确认" : "已停止"}`;
   const title = message;
   const tag = needsConfirm ? "question" : "white_check_mark";
   const priority = needsConfirm ? 4 : 3;
   const click = `fuluk://session/${session.id}`;
   const query = new URLSearchParams({ title, priority: String(priority), tags: tag, click });
   const headers = { "content-type": "text/plain;charset=UTF-8" };
+  if (event.taskState === "completed") headers["X-Message-ID"] = stoppedNotificationMessageId(session);
   if (ntfy.token) {
     headers.authorization = /^(?:Bearer|Basic)\s/i.test(ntfy.token)
       ? ntfy.token
@@ -1095,6 +1292,33 @@ async function sendNtfyNotification(event, { config, tmux, fetchImpl = fetch }) 
   } catch (error) {
     console.warn(`ntfy notification failed: ${errorMessage(error)}`);
   }
+}
+
+async function cancelNtfyStoppedNotification(event, { config, fetchImpl = fetch }) {
+  const ntfy = config.runtimeSettings?.notifications?.ntfy;
+  if (!ntfy?.enabled) return;
+  const headers = {
+    "content-type": "text/plain;charset=UTF-8",
+    "X-Message-ID": stoppedNotificationMessageId(event.session)
+  };
+  if (ntfy.token) {
+    headers.authorization = /^(?:Bearer|Basic)\s/i.test(ntfy.token)
+      ? ntfy.token
+      : `Bearer ${ntfy.token}`;
+  }
+  try {
+    await fetchImpl(`${ntfy.server}/${encodeURIComponent(ntfy.topic)}`, {
+      method: "POST",
+      headers,
+      body: ""
+    });
+  } catch (error) {
+    console.warn(`ntfy cancellation failed: ${errorMessage(error)}`);
+  }
+}
+
+function stoppedNotificationMessageId(session) {
+  return `fuluk-session-${session.id}-stopped`;
 }
 
 function findExistingNamedSession(input, { store }) {

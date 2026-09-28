@@ -8,9 +8,14 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/fuluk-gateway
 EnvironmentFile=/etc/fuluk-gateway/fuluk-gateway.env
-ExecStart=/usr/bin/npm start
+ExecStart=/usr/bin/node src/server.mjs
 Restart=on-failure
 RestartSec=3
+
+# Only signal the gateway process on stop/restart. The tmux server keeps
+# running inside this unit's cgroup; the default control-group kill mode
+# would kill it (and every interactive session) along with the service.
+KillMode=process
 
 # Run as the user that owns /opt/fuluk-gateway and can access tmux.
 # The AI CLIs run directly on the host as this user.

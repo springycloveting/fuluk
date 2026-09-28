@@ -278,7 +278,7 @@ test("/api/sessions output raw mode preserves terminal escapes", async () => {
     {
       sessionId: "session-1",
       lines: 300,
-      options: { preserveEscapes: true, alternateScreen: true, offset: 0 }
+      options: { preserveEscapes: true, alternateScreen: true, offset: 0, followCopyMode: true }
     }
   ]);
   assert.deepEqual(saved, [{ sessionId: "session-1", lines: 300, text: "\u001b[32mModel menu\u001b[0m" }]);
@@ -330,7 +330,7 @@ test("/api/sessions output forwards capture offset", async () => {
     {
       sessionId: "session-1",
       lines: 80,
-      options: { preserveEscapes: true, alternateScreen: true, offset: 40 }
+      options: { preserveEscapes: true, alternateScreen: true, offset: 40, followCopyMode: false }
     }
   ]);
   assert.deepEqual(saved, []);
@@ -1044,6 +1044,45 @@ test("/api/sessions marks unchanged output older than one minute as stopped", as
   assert.deepEqual(saved.map((snapshot) => snapshot.sessionId), ["session-3"]);
 });
 
+test("/api/sessions keeps persisted status when tmux socket is inaccessible", async () => {
+  const sessions = [
+    { id: "session-1", name: "live", kind: "codex", status: "running", cwd: "/one", tmuxSessionName: "one" }
+  ];
+  const statusUpdates = [];
+  const { statusCode, body } = await getJson("/api/sessions", {
+    config: {
+      authToken: "secret",
+      allowRuntimeMode: true,
+      runtimeSettings: {},
+      runtimeSettingsEnabled: false
+    },
+    store: {
+      list() {
+        return sessions;
+      },
+      updateStatus(id, status) {
+        statusUpdates.push({ id, status });
+      },
+      latestOutputSnapshot() {
+        return null;
+      },
+      saveOutput() {}
+    },
+    tmux: {
+      async exists() {
+        throw new Error("error connecting to /tmp/tmux-1000/default (Operation not permitted)");
+      },
+      async capture() {
+        return "";
+      }
+    }
+  });
+
+  assert.equal(statusCode, 200);
+  assert.equal(JSON.parse(body).sessions[0].status, "running");
+  assert.deepEqual(statusUpdates, []);
+});
+
 test("/api/sessions notifies when a session changes from in progress to stopped", async () => {
   const sessions = [
     { id: "session-1", name: "idle", kind: "codex", status: "running", cwd: "/one", tmuxSessionName: "one" }
@@ -1691,4 +1730,461 @@ test("/api/sessions publishes a transition to the configured ntfy server", async
   assert.equal(parsedUrl.searchParams.get("click"), "fuluk://session/session-1");
   assert.equal(ntfyRequests[0].options.headers.authorization, "Bearer ntfy-token");
   assert.equal(ntfyRequests[0].body, "confirm 等待确认");
+});
+
+test("/api/sessions does not mark a session stopped when capture fails", async () => {
+  const sessions = [
+    { id: "session-1", name: "working", kind: "codex", status: "running", cwd: "/one", tmuxSessionName: "one" }
+  ];
+  const events = [];
+  const context = {
+    config: {
+      authToken: "secret",
+      allowRuntimeMode: true,
+      runtimeSettings: {},
+      runtimeSettingsEnabled: false,
+      notificationWebhookUrl: "https://hooks.example/session"
+    },
+    store: {
+      list() {
+        return sessions;
+      },
+      updateStatus() {},
+      latestOutputSnapshot() {
+        return {
+          id: 1,
+          sessionId: "session-1",
+          capturedAt: new Date(Date.now() - 61_000).toISOString(),
+          lines: 80,
+          text: "old output"
+        };
+      },
+      saveOutput() {}
+    },
+    tmux: {
+      async exists() {
+        return true;
+      },
+      async capture() {
+        throw new Error("capture timeout");
+      }
+    },
+    eventHub: {
+      broadcast(event) {
+        events.push(event);
+      }
+    },
+    sessionTaskStates: new Map(),
+    async fetchImpl() {
+      return { ok: true };
+    }
+  };
+
+  const first = await getJson("/api/sessions", context);
+  const second = await getJson("/api/sessions", context);
+
+  assert.equal(first.statusCode, 200);
+  assert.equal(second.statusCode, 200);
+  assert.equal(JSON.parse(second.body).sessions[0].taskState, "in_progress");
+  assert.deepEqual(events, []);
+});
+
+test("/api/sessions exits completed stickiness when new output appears without user input", async () => {
+  const sessions = [
+    { id: "session-1", name: "worker", kind: "codex", status: "running", cwd: "/one", tmuxSessionName: "one" }
+  ];
+  let captureCount = 0;
+  const context = {
+    config: {
+      authToken: "secret",
+      allowRuntimeMode: true,
+      runtimeSettings: {},
+      runtimeSettingsEnabled: false
+    },
+    store: {
+      list() {
+        return sessions;
+      },
+      updateStatus() {},
+      latestOutputSnapshot() {
+        if (captureCount < 2) {
+          return {
+            id: 1,
+            sessionId: "session-1",
+            capturedAt: new Date(Date.now() - (captureCount === 0 ? 1_000 : 61_000)).toISOString(),
+            lines: 80,
+            text: captureCount === 0 ? "working" : "same output"
+          };
+        }
+        return {
+          id: 2,
+          sessionId: "session-1",
+          capturedAt: new Date(Date.now() - 61_000).toISOString(),
+          lines: 80,
+          text: "same output"
+        };
+      },
+      saveOutput(sessionId, lines, text) {
+        return { id: 3, sessionId, capturedAt: new Date().toISOString(), lines, text };
+      }
+    },
+    tmux: {
+      async exists() {
+        return true;
+      },
+      async capture() {
+        captureCount += 1;
+        if (captureCount === 1) return "working";
+        if (captureCount === 2) return "same output";
+        return "new output";
+      }
+    },
+    eventHub: { broadcast() {} },
+    sessionTaskStates: new Map()
+  };
+
+  await getJson("/api/sessions", context);
+  await getJson("/api/sessions", context);
+  const third = await getJson("/api/sessions", context);
+
+  assert.equal(third.statusCode, 200);
+  assert.equal(JSON.parse(third.body).sessions[0].taskState, "in_progress");
+});
+
+test("/api/sessions suppresses idle detection on the first poll after a long polling gap", async () => {
+  const sessions = [
+    { id: "session-1", name: "worker", kind: "codex", status: "running", cwd: "/one", tmuxSessionName: "one" }
+  ];
+  const events = [];
+  const context = {
+    config: {
+      authToken: "secret",
+      allowRuntimeMode: true,
+      runtimeSettings: {},
+      runtimeSettingsEnabled: false
+    },
+    store: {
+      list() {
+        return sessions;
+      },
+      updateStatus() {},
+      latestOutputSnapshot() {
+        return {
+          id: 1,
+          sessionId: "session-1",
+          capturedAt: new Date(Date.now() - 61_000).toISOString(),
+          lines: 80,
+          text: "same output"
+        };
+      },
+      saveOutput() {}
+    },
+    tmux: {
+      async exists() {
+        return true;
+      },
+      async capture() {
+        return "same output";
+      }
+    },
+    eventHub: {
+      broadcast(event) {
+        events.push(event);
+      }
+    },
+    sessionTaskStates: new Map(),
+    lastTaskPollAt: Date.now() - 120_000
+  };
+
+  const result = await getJson("/api/sessions", context);
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(JSON.parse(result.body).sessions[0].taskState, "in_progress");
+  assert.deepEqual(events, []);
+});
+
+test("/api/sessions keeps a completed session stopped when capture fails", async () => {
+  const sessions = [
+    { id: "session-1", name: "done", kind: "codex", status: "running", cwd: "/one", tmuxSessionName: "one" }
+  ];
+  let captureCount = 0;
+  const events = [];
+  const context = {
+    config: {
+      authToken: "secret",
+      allowRuntimeMode: true,
+      runtimeSettings: {},
+      runtimeSettingsEnabled: false
+    },
+    store: {
+      list() {
+        return sessions;
+      },
+      updateStatus() {},
+      latestOutputSnapshot() {
+        return {
+          id: 1,
+          sessionId: "session-1",
+          capturedAt: new Date(Date.now() - (captureCount === 0 ? 61_000 : 90_000)).toISOString(),
+          lines: 80,
+          text: "same output"
+        };
+      },
+      saveOutput() {}
+    },
+    tmux: {
+      async exists() {
+        return true;
+      },
+      async capture() {
+        captureCount += 1;
+        if (captureCount === 1) return "same output";
+        throw new Error("capture timeout");
+      }
+    },
+    eventHub: {
+      broadcast(event) {
+        events.push(event);
+      }
+    },
+    sessionTaskStates: new Map()
+  };
+
+  const first = await getJson("/api/sessions", context);
+  const second = await getJson("/api/sessions", context);
+
+  assert.equal(first.statusCode, 200);
+  assert.equal(second.statusCode, 200);
+  assert.equal(JSON.parse(first.body).sessions[0].taskState, "completed");
+  assert.equal(JSON.parse(second.body).sessions[0].taskState, "completed");
+  assert.deepEqual(events, []);
+});
+test("/api/sessions keeps a completed session stopped after a resize redraw", async () => {
+  const sessions = [
+    { id: "session-1", name: "done", kind: "codex", status: "running", cwd: "/one", tmuxSessionName: "one" }
+  ];
+  let captureCount = 0;
+  const events = [];
+  const context = {
+    config: {
+      authToken: "secret",
+      allowRuntimeMode: true,
+      runtimeSettings: {},
+      runtimeSettingsEnabled: false
+    },
+    store: {
+      list() {
+        return sessions;
+      },
+      updateStatus() {},
+      latestOutputSnapshot() {
+        return {
+          id: captureCount,
+          sessionId: "session-1",
+          capturedAt: new Date(Date.now() - 61_000).toISOString(),
+          lines: 80,
+          text: "same output"
+        };
+      },
+      saveOutput(sessionId, lines, text) {
+        return {
+          id: captureCount + 10,
+          sessionId,
+          capturedAt: new Date().toISOString(),
+          lines,
+          text
+        };
+      }
+    },
+    tmux: {
+      async exists() {
+        return true;
+      },
+      async capture() {
+        captureCount += 1;
+        return captureCount === 1 ? "same output" : "redrawn output";
+      },
+      async resize() {}
+    },
+    eventHub: {
+      broadcast(event) {
+        events.push(event);
+      }
+    },
+    sessionTaskStates: new Map([["session-1", { state: "completed", at: Date.now() - 30_000 }]]),
+    sessionViewEvents: new Map([["session-1", Date.now() - 500]])
+  };
+
+  await getJson("/api/sessions", context);
+  const second = await getJson("/api/sessions", context);
+
+  assert.equal(second.statusCode, 200);
+  assert.equal(JSON.parse(second.body).sessions[0].taskState, "completed");
+  assert.deepEqual(events, []);
+});
+
+test("/api/sessions cancels the stopped notification when the session resumes", async () => {
+  const sessions = [
+    { id: "session-1", name: "worker", kind: "codex", status: "running", cwd: "/one", tmuxSessionName: "one" }
+  ];
+  let captureCount = 0;
+  const ntfyRequests = [];
+  const context = {
+    config: {
+      authToken: "secret",
+      allowRuntimeMode: true,
+      runtimeSettings: {
+        notifications: { ntfy: { server: "https://ntfy.example", topic: "fuluk", token: "", enabled: true } }
+      },
+      runtimeSettingsEnabled: true
+    },
+    store: {
+      list() {
+        return sessions;
+      },
+      updateStatus() {},
+      latestOutputSnapshot() {
+        if (captureCount === 1) {
+          return {
+            id: 1,
+            sessionId: "session-1",
+            capturedAt: new Date(Date.now() - 61_000).toISOString(),
+            lines: 80,
+            text: "same output"
+          };
+        }
+        if (captureCount === 0) {
+          return {
+            id: 1,
+            sessionId: "session-1",
+            capturedAt: new Date(Date.now() - 1_000).toISOString(),
+            lines: 80,
+            text: "working"
+          };
+        }
+        return {
+          id: 2,
+          sessionId: "session-1",
+          capturedAt: new Date(Date.now() - 61_000).toISOString(),
+          lines: 80,
+          text: "same output"
+        };
+      },
+      saveOutput(sessionId, lines, text) {
+        return { id: 3, sessionId, capturedAt: new Date().toISOString(), lines, text };
+      }
+    },
+    tmux: {
+      async exists() {
+        return true;
+      },
+      async capture() {
+        captureCount += 1;
+        if (captureCount === 1) return "working";
+        if (captureCount === 2) return "same output";
+        return "new output";
+      }
+    },
+    eventHub: { broadcast() {} },
+    sessionTaskStates: new Map(),
+    async fetchImpl(url, options) {
+      ntfyRequests.push({ url, options });
+      return { ok: true };
+    }
+  };
+
+  await getJson("/api/sessions", context);
+  await getJson("/api/sessions", context);
+  await getJson("/api/sessions", context);
+
+  assert.equal(ntfyRequests.length, 2);
+  assert.equal(ntfyRequests[0].options.body, "worker 已停止");
+  assert.equal(
+    ntfyRequests[0].options.headers["X-Message-ID"],
+    "fuluk-session-session-1-stopped"
+  );
+  assert.equal(ntfyRequests[1].options.body, "");
+  assert.equal(
+    ntfyRequests[1].options.headers["X-Message-ID"],
+    "fuluk-session-session-1-stopped"
+  );
+});
+
+test("/api/sessions does not send a stopped notification after waiting for confirmation", async () => {
+  const sessions = [
+    { id: "session-1", name: "worker", kind: "opencode", status: "running", cwd: "/one", tmuxSessionName: "one" }
+  ];
+  let captureCount = 0;
+  const ntfyRequests = [];
+  const context = {
+    config: {
+      authToken: "secret",
+      allowRuntimeMode: true,
+      runtimeSettings: {
+        notifications: { ntfy: { server: "https://ntfy.example", topic: "fuluk", token: "", enabled: true } }
+      },
+      runtimeSettingsEnabled: true
+    },
+    store: {
+      list() {
+        return sessions;
+      },
+      updateStatus() {},
+      latestOutputSnapshot() {
+        if (captureCount <= 1) {
+          return {
+            id: 2,
+            sessionId: "session-1",
+            capturedAt: new Date(Date.now() - 1_000).toISOString(),
+            lines: 80,
+            text: "working"
+          };
+        }
+        if (captureCount === 2) {
+          return {
+            id: 3,
+            sessionId: "session-1",
+            capturedAt: new Date(Date.now() - 1_000).toISOString(),
+            lines: 80,
+            text: "Allow once   Allow always   Reject"
+          };
+        }
+        return {
+          id: 4,
+          sessionId: "session-1",
+          capturedAt: new Date(Date.now() - 61_000).toISOString(),
+          lines: 80,
+          text: "same output"
+        };
+      },
+      saveOutput() {}
+    },
+    tmux: {
+      async exists() {
+        return true;
+      },
+      async capture() {
+        captureCount += 1;
+        if (captureCount <= 1) return "working";
+        if (captureCount === 2) return "Allow once   Allow always   Reject";
+        return "same output";
+      }
+    },
+    eventHub: { broadcast() {} },
+    sessionTaskStates: new Map(),
+    async fetchImpl(url, options) {
+      ntfyRequests.push({ url, options });
+      return { ok: true };
+    }
+  };
+
+  await getJson("/api/sessions", context);
+  await getJson("/api/sessions", context);
+  await getJson("/api/sessions", context);
+  const fourth = await getJson("/api/sessions", context);
+
+  assert.equal(fourth.statusCode, 200);
+  assert.equal(JSON.parse(fourth.body).sessions[0].taskState, "completed");
+  assert.equal(ntfyRequests.length, 1);
+  assert.equal(ntfyRequests[0].options.body, "worker 等待确认");
 });

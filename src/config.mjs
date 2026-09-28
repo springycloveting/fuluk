@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 
 export function loadConfig() {
   const settingsPath =
@@ -9,6 +10,9 @@ export function loadConfig() {
   const runtimeSettings = loadRuntimeSettings(settingsPath);
 
   const authToken = loadAuthToken();
+  const defaultCwd =
+    expandConfigPath(process.env.SESSION_GATEWAY_DEFAULT_CWD) ??
+    path.resolve(os.homedir(), "work");
 
   return {
     host: process.env.HOST ?? "127.0.0.1",
@@ -23,6 +27,12 @@ export function loadConfig() {
       process.env.SESSION_GATEWAY_DB ??
       path.resolve(process.cwd(), "data", "session-gateway.sqlite"),
     defaultRuntimeCommand: process.env.SESSION_GATEWAY_RUNTIME ?? "/bin/bash",
+    defaultCwd,
+    // Whitelist enforced when strict mode is on. Strict mode defaults on so a
+    // manual path or directory traversal cannot escape the allowed roots.
+    strictCwd: process.env.SESSION_GATEWAY_STRICT_CWD !== "false",
+    allowedCwds:
+      parsePathList(process.env.SESSION_GATEWAY_ALLOWED_CWDS) ?? [defaultCwd],
     notificationPollMs: parsePositiveInt(process.env.SESSION_GATEWAY_NOTIFICATION_POLL_MS, 5_000),
     submitKeyDelayMs: parsePositiveInt(process.env.SESSION_GATEWAY_SUBMIT_KEY_DELAY_MS, 80),
     cliStartupDelayMs: parsePositiveInt(process.env.SESSION_GATEWAY_CLI_STARTUP_DELAY_MS, 3000),
@@ -34,6 +44,23 @@ export function loadConfig() {
       runtime: process.env.SESSION_GATEWAY_RUNTIME_SUBMIT_KEY ?? "Enter"
     }
   };
+}
+
+function expandConfigPath(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const trimmed = value.trim();
+  if (trimmed === "~") return path.resolve(os.homedir());
+  if (trimmed.startsWith("~/")) return path.resolve(os.homedir(), trimmed.slice(2));
+  return path.resolve(trimmed);
+}
+
+function parsePathList(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const paths = value
+    .split(":")
+    .map((entry) => expandConfigPath(entry))
+    .filter((entry) => Boolean(entry));
+  return paths.length ? [...new Set(paths)] : null;
 }
 
 export function updateRuntimeSettings(config, input) {

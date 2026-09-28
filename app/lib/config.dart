@@ -4,9 +4,6 @@ class AppConfig {
   String gatewayHost;
   String gatewayPort;
   String gatewayToken;
-  String ntfyServer;
-  String ntfyTopic;
-  String ntfyToken;
   String asrBaseUrl;
   String asrModel;
   String asrApiKey;
@@ -18,9 +15,6 @@ class AppConfig {
       {this.gatewayHost = "",
       this.gatewayPort = "8787",
       this.gatewayToken = "",
-      this.ntfyServer = "",
-      this.ntfyTopic = "",
-      this.ntfyToken = "",
       this.asrBaseUrl = "",
       this.asrModel = "",
       this.asrApiKey = "",
@@ -42,9 +36,6 @@ class AppConfig {
       gatewayPort.trim().isNotEmpty &&
       gatewayToken.trim().isNotEmpty;
 
-  bool get ntfyConfigured =>
-      ntfyServer.trim().isNotEmpty && ntfyTopic.trim().isNotEmpty;
-
   bool get asrConfigured =>
       asrBaseUrl.trim().isNotEmpty && asrModel.trim().isNotEmpty;
 
@@ -56,9 +47,6 @@ class AppConfig {
         gatewayHost: prefs.getString("gatewayHost") ?? "",
         gatewayPort: prefs.getString("gatewayPort") ?? "8787",
         gatewayToken: prefs.getString("gatewayToken") ?? "",
-        ntfyServer: prefs.getString("ntfyServer") ?? "",
-        ntfyTopic: prefs.getString("ntfyTopic") ?? "",
-        ntfyToken: prefs.getString("ntfyToken") ?? "",
         asrBaseUrl: prefs.getString("asrBaseUrl") ?? "",
         asrModel: prefs.getString("asrModel") ?? "",
         asrApiKey: prefs.getString("asrApiKey") ?? "",
@@ -72,9 +60,6 @@ class AppConfig {
       "gatewayHost",
       "gatewayPort",
       "gatewayToken",
-      "ntfyServer",
-      "ntfyTopic",
-      "ntfyToken",
       "asrBaseUrl",
       "asrModel",
       "asrApiKey",
@@ -86,9 +71,6 @@ class AppConfig {
       gatewayHost,
       gatewayPort,
       gatewayToken,
-      ntfyServer,
-      ntfyTopic,
-      ntfyToken,
       asrBaseUrl,
       asrModel,
       asrApiKey,

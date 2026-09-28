@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>风格预览 · Codex 桌面风</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel: #111111;
+    --panel-2: #161616;
+    --border: #262626;
+    --border-strong: #3d3d3d;
+    --text: #c8c8c8;
+    --text-strong: #f5f5f5;
+    --muted: #6b6b6b;
+    --accent: #f5f5f5;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --cyan: #67e8f9;
+    --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 13px; }
+  .shell { display: grid; grid-template-rows: 40px 1fr; height: 100%; }
+  .topbar { display: flex; align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .brand { color: var(--text-strong); font-weight: 600; letter-spacing: .02em; }
+  .brand .cursor { color: var(--green); }
+  .topbar .spacer { flex: 1; }
+  .crumb { color: var(--muted); font-size: 12px; }
+  .workspace { display: grid; grid-template-columns: 280px 1fr; min-height: 0; }
+  .side { border-right: 1px solid var(--border); background: var(--panel); padding: 12px; overflow-y: auto; }
+  .side-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .12em; margin: 4px 0 10px; }
+  .side-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid transparent; border-left: 2px solid transparent; cursor: pointer; color: var(--text); }
+  .side-item.active { background: var(--panel-2); border-left-color: var(--green); }
+  .side-item .pid { color: var(--muted); margin-left: auto; font-size: 11px; }
+  .main { padding: 20px 24px; line-height: 1.8; min-width: 0; }
+  .prompt-line .ps { color: var(--green); }
+  .prompt-line .path { color: var(--cyan); }
+  .dim { color: var(--muted); }
+  button {
+    font-family: var(--mono); font-size: 12px; min-height: 30px; padding: 0 14px;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border-strong);
+    border-radius: 6px; cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); color: var(--text-strong); }
+  button.primary { background: var(--accent); color: #000; border-color: var(--accent); }
+  button.primary:hover { background: #fff; }
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 10; backdrop-filter: blur(2px); }
+  .overlay.show { display: flex; }
+  .modal { width: 560px; max-width: calc(100vw - 32px); max-height: 88vh; background: var(--panel); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: 0 24px 60px rgba(0,0,0,.7); display: flex; flex-direction: column; overflow: hidden; }
+  .terminal-bar { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .tl-dot { width: 11px; height: 11px; border-radius: 50%; background: #2e2e2e; }
+  .tl-title { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .terminal-bar button { margin-left: auto; }
+  .modal-body { padding: 18px 20px; overflow-y: auto; display: grid; gap: 16px; }
+  .term-field { display: grid; gap: 7px; }
+  .term-field label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .1em; }
+  input, select {
+    font-family: var(--mono); font-size: 13px; min-height: 34px; padding: 6px 12px;
+    background: var(--bg); color: var(--text-strong); border: 1px solid var(--border-strong);
+    border-radius: 8px;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px rgba(74,222,128,.12); }
+  .cwd-row { display: flex; gap: 8px; }
+  .cwd-row input { flex: 1; }
+  .browser { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg); }
+  .browser-bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .browser-bar .path { flex: 1; font-size: 12px; color: var(--cyan); }
+  .browser-list { max-height: 170px; min-height: 100px; overflow-y: auto; padding: 6px; display: grid; gap: 2px; }
+  .entry { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 1px solid transparent; border-radius: 7px; color: var(--text); padding: 7px 10px; font-size: 13px; cursor: pointer; }
+  .entry:hover { background: rgba(255,255,255,.05); }
+  .entry.selected { background: rgba(74,222,128,.1); border-color: rgba(74,222,128,.4); }
+  .entry svg { width: 15px; height: 15px; color: var(--amber); flex: none; }
+  .mk-row { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
+  .mk-row input { flex: 1; min-height: 32px; }
+  fieldset { border: 1px solid var(--border); border-radius: 10px; margin: 0; padding: 14px; display: grid; gap: 12px; }
+  legend { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); padding: 0 8px; }
+  small { color: var(--muted); font-size: 11px; line-height: 1.6; }
+  .check { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+  .check input { min-height: 0; accent-color: var(--green); }
+  .modal-footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border); background: var(--panel); }
+  .modal-footer .keys { color: var(--muted); font-size: 11px; }
+  .hint { margin: 0; font-size: 12px; color: var(--amber); }
+  .switcher { position: fixed; right: 12px; bottom: 12px; z-index: 20; display: flex; gap: 6px; }
+  .switcher a { background: rgba(255,255,255,.06); border: 1px solid var(--border-strong); color: var(--text); padding: 7px 12px; border-radius: 8px; text-decoration: none; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="topbar">
+    <span class="brand">fuluk<span class="cursor">_</span></span>
+    <span class="crumb">~/work</span>
+    <span class="spacer"></span>
+    <button class="primary" onclick="document.getElementById('ov-create').classList.add('show')">+ new session</button>
+    <button onclick="document.getElementById('ov-config').classList.add('show')">settings</button>
+  </div>
+  <div class="workspace">
+    <aside class="side">
+      <div class="side-label">sessions</div>
+      <div class="side-item active"><span class="dot" style="color:var(--green)">●</span> codex-app <span class="pid">#1042</span></div>
+      <div class="side-item"><span style="color:var(--green)">●</span> claude-web <span class="pid">#1038</span></div>
+      <div class="side-item"><span style="color:var(--muted)">○</span> runtime-box <span class="pid">#0991</span></div>
+    </aside>
+    <main class="main">
+      <div class="prompt-line"><span class="ps">v6@fuluk</span>:<span class="path">~/work</span>$ <span class="dim">./gateway --port 8787</span></div>
+      <div class="dim">// 点击右上角 new session / settings 预览弹窗</div>
+    </main>
+  </div>
+</div>
+
+<div class="overlay" id="ov-create">
+  <div class="modal">
+    <div class="terminal-bar"><span class="tl-dot"></span><span class="tl-dot"></span><span class="tl-dot"></span><span class="tl-title">new — zsh</span><button onclick="closeAll()">关闭</button></div>
+    <div class="modal-body">
+      <div class="term-field"><label>kind</label>
+        <select><option>codex</option><option>claude</option><option>opencode</option><option>pi-os</option><option>runtime</option></select>
+      </div>
+      <div class="term-field"><label>name</label><input placeholder="codex-app" /></div>
+      <div class="term-field"><label>working directory</label>
+        <div class="cwd-row"><input value="/home/v6/work/codex-app" placeholder="~/work/…" /><button>browse…</button></div>
+      </div>
+      <div class="browser">
+        <div class="browser-bar"><button title="up">‹</button><span class="path">~/work</span></div>
+        <div class="browser-list">
+          <button class="entry selected"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.75C1.5 2.78 2.28 2 3.25 2h2.7c.48 0 .93.19 1.27.53L8.56 3.9h4.19c.97 0 1.75.78 1.75 1.75v5.6c0 .97-.78 1.75-1.75 1.75H3.25c-.97 0-1.75-.78-1.75-1.75V3.75Z"/></svg>CodeClip</button>
+          <button class="entry"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.75C1.5 2.78 2.28 2 3.25 2h2.7c.48 0 .93.19 1.27.53L8.56 3.9h4.19c.97 0 1.75.78 1.75 1.75v5.6c0 .97-.78 1.75-1.75 1.75H3.25c-.97 0-1.75-.78-1.75-1.75V3.75Z"/></svg>Session_Gateway</button>
+          <button class="entry"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.75C1.5 2.78 2.28 2 3.25 2h2.7c.48 0 .93.19 1.27.53L8.56 3.9h4.19c.97 0 1.75.78 1.75 1.75v5.6c0 .97-.78 1.75-1.75 1.75H3.25c-.97 0-1.75-.78-1.75-1.75V3.75Z"/></svg>Secure-AI</button>
+        </div>
+        <div class="mk-row"><input placeholder="new folder name" /><button>mkdir</button></div>
+      </div>
+      <p class="hint">⚠ strict mode · allowed roots: ~/work</p>
+      <div class="term-field"><label>project</label><input placeholder="optional" /></div>
+    </div>
+    <div class="modal-footer"><span class="keys">esc to cancel · ⏎ to create</span><span style="display:flex;gap:8px"><button onclick="closeAll()">cancel</button><button class="primary">create</button></span></div>
+  </div>
+</div>
+
+<div class="overlay" id="ov-config">
+  <div class="modal">
+    <div class="terminal-bar"><span class="tl-dot"></span><span class="tl-dot"></span><span class="tl-dot"></span><span class="tl-title">settings — ~/.fuluk/config.toml</span><button onclick="closeAll()">关闭</button></div>
+    <div class="modal-body">
+      <div class="term-field"><label>language</label><select><option>中文</option><option>English</option></select></div>
+      <div class="term-field"><label>appearance</label><select><option>dark</option><option>light</option></select></div>
+      <div class="term-field"><label>bearer token</label><input type="password" placeholder="SESSION_GATEWAY_TOKEN" /></div>
+      <fieldset>
+        <legend>assistant & parser</legend>
+        <small>provider:model-id · e.g. anthropic:claude-sonnet-4</small>
+        <label class="check"><input type="checkbox" checked /> enable web-pi assistant</label>
+        <label class="check"><input type="checkbox" /> AI fallback when rules fail</label>
+        <input placeholder="https://api.anthropic.com" />
+        <input placeholder="anthropic:claude-sonnet-4" />
+        <input type="password" placeholder="api key" />
+      </fieldset>
+      <fieldset>
+        <legend>glasses pairing</legend>
+        <small>approve devices after they announce an address.</small>
+        <div class="entry" style="cursor:default">🕶 glass-a3f2… <button style="margin-left:auto">approve</button></div>
+      </fieldset>
+    </div>
+    <div class="modal-footer"><span class="keys">ctrl+s to save</span><span style="display:flex;gap:8px"><button onclick="closeAll()">cancel</button><button class="primary">save</button></span></div>
+  </div>
+</div>
+
+<div class="switcher">
+  <a href="ide-style.html">IDE 风</a>
+  <a href="codex-desktop-style.html">Codex 桌面</a>
+  <a href="apple-style.html">苹果风</a>
+</div>
+<script>function closeAll(){document.querySelectorAll('.overlay').forEach(o=>o.classList.remove('show'));}</script>
+</body>
+</html>

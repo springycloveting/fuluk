@@ -57,7 +57,11 @@ export class TmuxBackend {
     try {
       await this.run("tmux", ["has-session", "-t", exactTmuxSessionTarget(record.tmuxSessionName)], 3_000);
       return true;
-    } catch {
+    } catch (error) {
+      // A missing session or no server means the session is genuinely gone.
+      // Permission/socket errors mean we cannot tell (wrong user, sandbox);
+      // surface them so callers don't persist a wrong "stopped" status.
+      if (isTmuxAccessError(error)) throw error;
       return false;
     }
   }
@@ -77,28 +81,102 @@ export class TmuxBackend {
   async sendKeys(record, keys) {
     await this.ensureSessionExists(record);
     const target = exactTmuxPaneTarget(record.tmuxSessionName);
-    const wheelButtons = [];
     const plainKeys = [];
+    const wheelActions = [];
     for (const key of keys) {
-      const button = wheelToSgrButton(key);
-      if (button === null) plainKeys.push(key);
-      else wheelButtons.push(button);
+      const tmuxWheel = tmuxWheelAction(key);
+      if (tmuxWheel !== null) wheelActions.push(tmuxWheel);
+      else plainKeys.push(key);
     }
     if (plainKeys.length) {
       await this.run("tmux", ["send-keys", "-t", target, ...plainKeys]);
     }
-    if (wheelButtons.length) {
-      const { stdout } = await this.run("tmux", [
+    if (wheelActions.length) {
+      const altInfo = await this
+        .run(
+          "tmux",
+          [
+            "display-message",
+            "-p",
+            "-t",
+            target,
+            "#{alternate_on}\n#{pane_mode}"
+          ],
+          3_000
+        )
+        .catch(() => ({ stdout: "" }));
+      const [altLine = "", modeLine = ""] = altInfo.stdout.split("\n");
+      if (modeLine.includes("copy")) {
+        await this.dispatchTmuxWheelKeys(target, wheelActions, { alreadyInCopyMode: true });
+      } else if (altLine.trim() === "1") {
+        const { stdout } = await this.run("tmux", [
         "display-message",
         "-p",
         "-t",
         target,
         "#{pane_width},#{pane_height}"
       ]);
-      const { col, row } = parsePaneGeometry(stdout);
-      const payload = wheelButtons.map((button) => `\x1b[<${button};${col};${row}M`).join("");
-      await this.run("tmux", ["send-keys", "-t", target, "-l", "--", payload]);
+        const { col, row } = parsePaneGeometry(stdout);
+        const payload = wheelActions
+          .map((action) => `\x1b[<${action === "up" ? 64 : 65};${col};${row}M`)
+          .join("");
+        await this.run("tmux", ["send-keys", "-t", target, "-l", "--", payload]);
+      } else {
+        await this.dispatchTmuxWheelKeys(target, wheelActions);
+      }
     }
+  }
+
+  async dispatchTmuxWheelKeys(target, wheelKeys, options = {}) {
+    if (!wheelKeys.length) return;
+    let copyModeActive = options.alreadyInCopyMode === true;
+    if (!copyModeActive) {
+      const modeInfo = await this.run(
+        "tmux",
+        ["display-message", "-p", "-t", target, "#{pane_mode}"],
+        3_000
+      ).catch(() => ({ stdout: "" }));
+      copyModeActive = /copy/.test(modeInfo.stdout.trim());
+    }
+    let pendingDir = null;
+    let pendingCount = 0;
+    const flush = async () => {
+      if (!pendingDir || pendingCount === 0) return;
+      if (pendingDir === "up") {
+        if (!copyModeActive) {
+          await this.run("tmux", ["copy-mode", "-t", target]);
+          copyModeActive = true;
+        }
+        await this.run(
+          "tmux",
+          ["send-keys", "-t", target, "-N", String(pendingCount), "-X", "scroll-up"]
+        );
+      } else if (copyModeActive) {
+        await this.run(
+          "tmux",
+          ["send-keys", "-t", target, "-N", String(pendingCount), "-X", "scroll-down"]
+        );
+        const posInfo = await this
+          .run("tmux", ["display-message", "-p", "-t", target, "#{scroll_position}"], 3_000)
+          .catch(() => ({ stdout: "" }));
+        if (posInfo.stdout.trim() === "0") {
+          await this.run("tmux", ["send-keys", "-t", target, "-X", "cancel"]);
+          copyModeActive = false;
+        }
+      }
+      pendingDir = null;
+      pendingCount = 0;
+    };
+    for (const action of wheelKeys) {
+      if (action === pendingDir) {
+        pendingCount += 1;
+      } else {
+        await flush();
+        pendingDir = action;
+        pendingCount = 1;
+      }
+    }
+    await flush();
   }
 
   async resize(record, cols, rows) {
@@ -120,12 +198,17 @@ export class TmuxBackend {
     const alternateFlags = options.preserveEscapes ? "-eapt" : "-apt";
     const offset = normalizeCaptureOffset(options.offset);
     const rangeArgs = offset > 0 ? ["-S", `-${lines + offset}`, "-E", `-${offset}`] : ["-S", `-${lines}`];
+    const target = exactTmuxPaneTarget(record.tmuxSessionName);
+    if (options.followCopyMode && await this.paneInCopyMode(target)) {
+      const { stdout } = await this.run("tmux", ["capture-pane", flags, target]);
+      return stdout;
+    }
     let result;
     try {
       result = await this.run("tmux", [
         "capture-pane",
         flags,
-        exactTmuxPaneTarget(record.tmuxSessionName),
+        target,
         ...rangeArgs
       ]);
     } catch (error) {
@@ -136,12 +219,25 @@ export class TmuxBackend {
       result = await this.run("tmux", [
         "capture-pane",
         alternateFlags,
-        exactTmuxPaneTarget(record.tmuxSessionName),
+        target,
         ...rangeArgs
       ]);
     }
     const { stdout } = result;
     return stdout;
+  }
+
+  async paneInCopyMode(target) {
+    try {
+      const { stdout } = await this.run(
+        "tmux",
+        ["display-message", "-p", "-t", target, "#{pane_mode}"],
+        3_000
+      );
+      return /copy/.test(stdout.trim());
+    } catch {
+      return false;
+    }
   }
 
   async stop(record) {
@@ -214,9 +310,9 @@ function normalizeCaptureOffset(value) {
   return Math.min(Math.max(parsed, 0), 5000);
 }
 
-function wheelToSgrButton(key) {
-  if (key === "WheelUpPane") return 64;
-  if (key === "WheelDownPane") return 65;
+export function tmuxWheelAction(key) {
+  if (key === "WheelUpPane") return "up";
+  if (key === "WheelDownPane") return "down";
   return null;
 }
 
@@ -255,6 +351,11 @@ async function run(command, args, timeout = DEFAULT_TIMEOUT_MS) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTmuxAccessError(error) {
+  const details = String(error?.message ?? "");
+  return /permission denied|operation not permitted/i.test(details);
 }
 
 function debugCommand(status, command, args, durationMs) {

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'config.dart';
-import 'ntfy_service.dart';
+import 'gateway_watch.dart';
 import 'screens/home_screen.dart';
 import 'screens/settings_screen.dart';
 
@@ -33,7 +33,7 @@ class _FulukAppState extends State<FulukApp> {
     final config = AppConfig.fromPrefs(prefs);
     if (config.gatewayConfigured) {
       try {
-        await NtfyService.applyConfig(config);
+        await GatewayWatch.start();
       } catch (_) {}
     }
     setState(() {

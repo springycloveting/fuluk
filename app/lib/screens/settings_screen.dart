@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 
 import '../api.dart';
 import '../config.dart';
-import '../ntfy_service.dart';
+import '../gateway_watch.dart';
 
 class SettingsScreen extends StatefulWidget {
   final AppConfig config;
@@ -20,9 +19,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _gatewayHost;
   late final TextEditingController _gatewayPort;
   late final TextEditingController _gatewayToken;
-  late final TextEditingController _ntfyServer;
-  late final TextEditingController _ntfyTopic;
-  late final TextEditingController _ntfyToken;
   late final TextEditingController _asrBaseUrl;
   late final TextEditingController _asrModel;
   late final TextEditingController _asrApiKey;
@@ -38,9 +34,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _gatewayHost = TextEditingController(text: c.gatewayHost);
     _gatewayPort = TextEditingController(text: c.gatewayPort);
     _gatewayToken = TextEditingController(text: c.gatewayToken);
-    _ntfyServer = TextEditingController(text: c.ntfyServer);
-    _ntfyTopic = TextEditingController(text: c.ntfyTopic);
-    _ntfyToken = TextEditingController(text: c.ntfyToken);
     _asrBaseUrl = TextEditingController(text: c.asrBaseUrl);
     _asrModel = TextEditingController(text: c.asrModel);
     _asrApiKey = TextEditingController(text: c.asrApiKey);
@@ -54,9 +47,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     c.gatewayHost = _gatewayHost.text;
     c.gatewayPort = _gatewayPort.text;
     c.gatewayToken = _gatewayToken.text;
-    c.ntfyServer = _ntfyServer.text;
-    c.ntfyTopic = _ntfyTopic.text;
-    c.ntfyToken = _ntfyToken.text;
     c.asrBaseUrl = _asrBaseUrl.text;
     c.asrModel = _asrModel.text;
     c.asrApiKey = _asrApiKey.text;
@@ -84,35 +74,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _testNtfy() async {
-    final c = widget.config;
-    if (!c.ntfyConfigured) throw Exception("请填写 ntfy 服务器和 Topic");
-    final server = c.ntfyServer.trim().replaceAll(RegExp(r"/+$"), "");
-    final topic = Uri.encodeComponent(c.ntfyTopic.trim());
-    final uri = Uri.parse("$server/$topic").replace(queryParameters: {
-      "title": "Fuluk 测试通知"
-    });
-    final headers = <String, String>{};
-    if (c.ntfyToken.trim().isNotEmpty) {
-      headers["authorization"] =
-          c.ntfyToken.startsWith("Bearer ") || c.ntfyToken.startsWith("Basic ")
-              ? c.ntfyToken.trim()
-              : "Bearer ${c.ntfyToken.trim()}";
-    }
-    final response =
-        await http.post(uri, headers: headers, body: "如果你看到这条消息，ntfy 通知配置正常。");
-    if (response.statusCode != 200) {
-      throw Exception("HTTP ${response.statusCode}");
-    }
-  }
-
   Future<void> _save() async {
     _syncToConfig();
     await widget.config.save();
-    if (widget.config.ntfyConfigured) {
-      await GatewayClient(widget.config).configureNtfy();
-    }
-    await NtfyService.applyConfig(widget.config);
+    await GatewayWatch.start();
     widget.onSaved();
     if (mounted) Navigator.of(context).pop();
   }
@@ -151,24 +116,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       icon: const Icon(Icons.wifi_find),
                       label: const Text("测试连接"))),
               const Divider(height: 32),
-              const _SectionTitle("ntfy 通知"),
-              TextField(
-                  controller: _ntfyServer,
-                  decoration: const InputDecoration(
-                      labelText: "ntfy 服务器", hintText: "https://ntfy.sh"),
-                  keyboardType: TextInputType.url),
-              TextField(
-                  controller: _ntfyTopic,
-                  decoration: const InputDecoration(labelText: "Topic")),
-              TextField(
-                  controller: _ntfyToken,
-                  decoration: const InputDecoration(labelText: "访问 Token（可选）")),
               Align(
                   alignment: Alignment.centerLeft,
                   child: TextButton.icon(
-                      onPressed: () => _runTest("通知", _testNtfy),
-                      icon: const Icon(Icons.notifications_active_outlined),
-                      label: const Text("发送测试通知"))),
+                      onPressed: () async {
+                        await GatewayWatch.requestOverlayPermission();
+                      },
+                      icon: const Icon(Icons.picture_in_picture_alt),
+                      label: const Text("授权悬浮弹窗（收到审核时直接显示）"))),
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                      onPressed: () async {
+                        await GatewayWatch.testOverlay();
+                        final status = await GatewayWatch.watchStatus();
+                        if (mounted && status.isNotEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(status)));
+                        }
+                      },
+                      icon: const Icon(Icons.bug_report),
+                      label: const Text("测试弹窗"))),
               const Divider(height: 32),
               const _SectionTitle("语音转写"),
               TextField(

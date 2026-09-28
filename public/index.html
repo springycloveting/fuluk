@@ -12,18 +12,18 @@
     <main class="shell">
       <header class="topbar">
         <div class="identity">
+          <button id="open-sessions" class="ghost sessions-toggle" type="button" aria-expanded="false" aria-controls="sessions-panel" title="会话">
+            <svg class="chevron" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
           <h1 id="selected-title">未选择会话</h1>
         </div>
         <div class="actions">
           <button id="confirm-alert" class="confirm-alert" type="button" hidden>需要确认</button>
-          <button id="completed-alert" class="completed-alert" type="button" hidden>已完成</button>
+          <button id="completed-alert" class="completed-alert" type="button" hidden>已停止</button>
           <button id="all-yes" class="all-yes-btn" type="button" data-state="off">All Yes</button>
           <button id="open-history" class="ghost" type="button">历史</button>
           <button id="open-create" class="ghost" type="button">新建</button>
           <button id="open-config" class="ghost" type="button">配置</button>
-          <button id="open-sessions" class="ghost sessions-toggle" type="button" aria-expanded="false" aria-controls="sessions-panel" title="会话">
-            <svg class="chevron" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
         </div>
       </header>
 
@@ -48,7 +48,7 @@
       <aside id="sessions-panel" class="sessions-panel" aria-hidden="true">
         <div class="panel-head">
           <button id="close-sessions" class="ghost panel-collapse" type="button" title="关闭">
-            <svg class="chevron" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg class="chevron" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
           <div class="actions">
             <button id="refresh" class="ghost" type="button">刷新</button>
@@ -131,7 +131,25 @@
             <option value="runtime">runtime</option>
           </select>
           <input id="name" placeholder="会话名，例如 codex-app" />
-          <input id="cwd" placeholder="工作目录，留空使用默认目录" />
+          <div class="cwd-row">
+            <input id="cwd" placeholder="工作目录，留空使用默认目录" />
+            <button id="browse-cwd" class="ghost" type="button" data-i18n="browse">浏览</button>
+          </div>
+          <div id="cwd-browser" class="cwd-browser" hidden>
+            <div class="cwd-browser-head">
+              <button id="cwd-up" class="ghost" type="button" title="上一级" data-i18n-title="upLevel">
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 11.5 6.5 8 10 4.5"/></svg>
+              </button>
+              <span id="cwd-current" class="cwd-current"></span>
+            </div>
+            <div id="cwd-list" class="cwd-list"></div>
+            <div class="cwd-mkdir-row">
+              <input id="cwd-new-name" placeholder="新文件夹名" />
+              <button id="cwd-mkdir" type="button" data-i18n="newFolder">新建</button>
+              <button id="cwd-select" type="button" data-i18n="selectFolder">确认</button>
+            </div>
+          </div>
+          <p id="cwd-hint" class="cwd-hint"></p>
           <input id="project" placeholder="项目名" />
           <button id="create" type="submit">新建</button>
         </form>
