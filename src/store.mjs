@@ -119,6 +119,18 @@ export class SessionStore {
       .run(status, timestamp, status === "running" ? null : timestamp, id);
   }
 
+  dismissCompletedAlert(id) {
+    this.db
+      .prepare("update sessions set completed_alert_dismissed_at = ? where id = ?")
+      .run(nowIso(), id);
+  }
+
+  clearCompletedAlertDismissed(id) {
+    this.db
+      .prepare("update sessions set completed_alert_dismissed_at = null where id = ?")
+      .run(id);
+  }
+
   markRunning(id) {
     this.db
       .prepare("update sessions set status = 'running', updated_at = ?, stopped_at = null where id = ?")
@@ -328,6 +340,14 @@ export class SessionStore {
         on session_hook_state(updated_at desc);
     `);
     this.ensureColumn("sessions", "cli_session_id", "text");
+    this.ensureColumn("sessions", "completed_alert_dismissed_at", "text");
+    this.db
+      .prepare(
+        `update sessions
+         set completed_alert_dismissed_at = coalesce(stopped_at, updated_at)
+         where completed_alert_dismissed_at is null`
+      )
+      .run();
   }
 
   ensureColumn(table, column, definition) {
@@ -370,7 +390,8 @@ function mapSessionRow(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     stoppedAt: row.stopped_at,
-    cliSessionId: row.cli_session_id ?? null
+    cliSessionId: row.cli_session_id ?? null,
+    completedAlertDismissedAt: row.completed_alert_dismissed_at ?? null
   };
 }
 

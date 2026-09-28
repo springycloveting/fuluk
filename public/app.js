@@ -292,6 +292,9 @@ els.completedAlert.addEventListener("click", async () => {
   const session = firstCompletedAlertSession();
   if (!session) return;
   state.completedAlerts.shift();
+  try {
+    await api(`/api/sessions/${encodeURIComponent(session.id)}/dismiss-alert`, { method: "POST" });
+  } catch {}
   await selectSession(session);
   renderCompletedAlert();
 });
@@ -1924,13 +1927,15 @@ function recordTaskTransitions(sessions) {
   const liveIds = new Set(sessions.map((session) => session.id));
   state.completedAlerts = state.completedAlerts.filter(
     (id) => liveIds.has(id) &&
-      sessions.find((session) => session.id === id)?.taskState === "completed"
+      sessions.find((session) => session.id === id)?.taskState === "completed" &&
+      !sessions.find((session) => session.id === id)?.completedAlertDismissedAt
   );
   for (const session of sessions) {
     const previous = state.taskStates.get(session.id);
     if (
       previous === "in_progress" &&
       session.taskState === "completed" &&
+      !session.completedAlertDismissedAt &&
       !state.completedAlerts.includes(session.id)
     ) {
       state.completedAlerts.push(session.id);

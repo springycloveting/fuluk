@@ -384,10 +384,10 @@ async function handleSessionAction(req, res, url, method, idOrName, action, cont
   }
 
   if (method === "POST" && action === "input") {
-    const body = await readJsonBody(req);
-    if (typeof body.text !== "string" || !body.text.trim()) throw new Error("text is required");
-    await tmux.send(session, body.text);
-    store.saveInput(session.id, body.text);
+    const bodyInput = await readJsonBody();
+    if (typeof bodyInput.text !== "string" || !bodyInput.text.trim()) throw new Error("text is required");
+    await tmux.send(session, bodyInput.text);
+    store.saveInput(session.id, bodyInput.text);
     store.touch(session.id);
     context.sessionViewEvents?.delete(session.id);
     if ((session.kind === "claude" || session.kind === "opencode") && !session.cliSessionId) {
@@ -395,6 +395,22 @@ async function handleSessionAction(req, res, url, method, idOrName, action, cont
         captureCliSessionId(session.id, context).catch(() => {});
       }, 1500);
     }
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (method === "POST" && action === "dismiss-alert") {
+    store.dismissCompletedAlert(session.id);
+    const updatedSession = {
+      ...session,
+      completedAlertDismissedAt: new Date().toISOString()
+    };
+    context.eventHub?.broadcast({
+      type: "session_alert_dismissed",
+      session: updatedSession,
+      sessionId: session.id,
+      changedAt: new Date().toISOString()
+    });
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -1198,6 +1214,7 @@ async function dispatchSessionTaskTransitions(sessions, context) {
   if (!context.sessionTaskStates) context.sessionTaskStates = new Map();
   const notifications = [];
   const cancellations = [];
+  const broadcasts = [];
   for (const session of sessions) {
     const previousEntry = context.sessionTaskStates.get(session.id);
     const previousTaskState = previousEntry?.state;
@@ -1211,6 +1228,14 @@ async function dispatchSessionTaskTransitions(sessions, context) {
     let awaitingConfirmation = previousEntry?.awaitingConfirmation === true;
     if (inputChanged) awaitingConfirmation = false;
     if (session.taskState === "needs_confirmation") awaitingConfirmation = true;
+    if (
+      previousTaskState === "completed" &&
+      session.taskState !== "completed"
+    ) {
+      if (typeof context.store.clearCompletedAlertDismissed === "function") {
+        context.store.clearCompletedAlertDismissed(session.id);
+      }
+    }
     context.sessionTaskStates.set(session.id, {
       state: session.taskState,
       at: enteredAt,
@@ -1224,6 +1249,9 @@ async function dispatchSessionTaskTransitions(sessions, context) {
       taskState: session.taskState,
       changedAt: new Date().toISOString()
     };
+    if (previousTaskState !== undefined && previousTaskState !== session.taskState) {
+      broadcasts.push(event);
+    }
     if (
       shouldNotifyTaskTransition(previousTaskState, session.taskState) &&
       !(session.taskState === "completed" && awaitingConfirmation)
@@ -1233,8 +1261,10 @@ async function dispatchSessionTaskTransitions(sessions, context) {
     if (shouldCancelStoppedNotification(previousTaskState, session.taskState)) cancellations.push(event);
   }
 
-  for (const event of notifications) {
+  for (const event of broadcasts) {
     context.eventHub?.broadcast(event);
+  }
+  for (const event of notifications) {
     await sendSessionWebhook(event, context);
     await sendNtfyNotification(event, context);
   }

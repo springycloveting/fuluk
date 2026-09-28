@@ -46,7 +46,7 @@ class GatewayWatchService : Service() {
             }
             ACTION_TEST_OVERLAY -> {
                 createChannels()
-                showOverlay("会话:测试 需要审核", "__test__")
+                showOverlay("会话:测试 需要审核", "__test__", "这是会话内容预览的示例。\n真实审核时会显示待确认命令附近的终端输出，供你判断是否同意。")
                 return START_NOT_STICKY
             }
             else -> start()
@@ -58,6 +58,8 @@ class GatewayWatchService : Service() {
         if (running) return
         createChannels()
         startForeground(NOTIFY_LISTEN, buildListenNotification())
+        @Suppress("DEPRECATION")
+        stopForeground(true)
         running = true
         connect()
     }
@@ -170,10 +172,33 @@ class GatewayWatchService : Service() {
             .build()
         (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
             .notify(sessionId.hashCode(), notification)
-        showOverlay(message, sessionId)
+        val needsReview = message.contains("需要审核")
+        if (needsReview && sessionId != "__test__") {
+            Thread {
+                var contextText = ""
+                try {
+                    val config = gatewayConfig()
+                    if (config != null) {
+                        val prompt = JSONObject(
+                            httpJson(
+                                "${config.httpBase}/api/sessions/$sessionId/prompt?lines=80",
+                                config.token, "GET", null
+                            )
+                        )
+                        if (prompt.optBoolean("needsConfirmation")) {
+                            contextText = prompt.optString("context")
+                        }
+                    }
+                } catch (_: Exception) {}
+                val finalContext = contextText
+                Handler(mainLooper).post { showOverlay(message, sessionId, finalContext) }
+            }.start()
+        } else {
+            Handler(mainLooper).post { showOverlay(message, sessionId, "") }
+        }
     }
 
-    private fun showOverlay(message: String, sessionId: String) {
+    private fun showOverlay(message: String, sessionId: String, contextText: String) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
             !android.provider.Settings.canDrawOverlays(this)
         ) return
@@ -191,6 +216,17 @@ class GatewayWatchService : Service() {
             textSize = 15f
             setPadding(0, 0, 0, 14)
         }
+        val contextView = TextView(this).apply {
+            text = contextText
+            setTextColor(0xFFB0BEC5.toInt())
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(0, 0, 0, 14)
+            maxHeight = (220 * resources.displayMetrics.density).toInt()
+            isVerticalScrollBarEnabled = true
+            movementMethod = android.text.method.ScrollingMovementMethod.getInstance()
+            visibility = if (contextText.isBlank()) android.view.View.GONE else android.view.View.VISIBLE
+        }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
 
         fun makeButton(label: String, primary: Boolean): Button =
@@ -204,6 +240,7 @@ class GatewayWatchService : Service() {
             }
 
         container.addView(messageView)
+        container.addView(contextView)
         if (needsReview) {
             val approve = makeButton("同意", true)
             val reject = makeButton("拒绝", false)
@@ -214,15 +251,17 @@ class GatewayWatchService : Service() {
         } else {
             val open = makeButton("打开", true)
             open.setOnClickListener {
-                startActivity(openSessionIntent(sessionId))
-                removeOverlay(sessionId)
+                dismissAlertFromOverlay(sessionId, true)
             }
             row.addView(open)
         }
         val close = Button(this).apply {
             text = "关闭"
             setTextColor(Color.WHITE)
-            setOnClickListener { removeOverlay(sessionId) }
+            setOnClickListener {
+                if (needsReview) removeOverlay(sessionId)
+                else dismissAlertFromOverlay(sessionId, false)
+            }
         }
         row.addView(close)
         container.addView(row)
@@ -257,6 +296,24 @@ class GatewayWatchService : Service() {
             setClass(this@GatewayWatchService, MainActivity::class.java)
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
+
+    private fun dismissAlertFromOverlay(sessionId: String, openApp: Boolean) {
+        Thread {
+            try {
+                val config = gatewayConfig() ?: throw IllegalStateException("gateway not configured")
+                httpJson(
+                    "${config.httpBase}/api/sessions/$sessionId/dismiss-alert",
+                    config.token, "POST", JSONObject().toString()
+                )
+            } catch (error: Exception) {
+                Log.w(TAG, "dismiss alert failed: ${error.message}")
+            }
+            Handler(mainLooper).post {
+                if (openApp) startActivity(openSessionIntent(sessionId))
+                removeOverlay(sessionId)
+            }
+        }.start()
+    }
 
     private fun resolveFromOverlay(sessionId: String, approve: Boolean) {
         Thread {

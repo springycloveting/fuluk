@@ -12,6 +12,7 @@ class SessionInfo {
   final String? taskState;
   final String? project;
   final String? phase;
+  final String? completedAlertDismissedAt;
 
   SessionInfo(
       {required this.id,
@@ -20,7 +21,8 @@ class SessionInfo {
       required this.status,
       required this.taskState,
       required this.project,
-      required this.phase});
+      required this.phase,
+      this.completedAlertDismissedAt});
 
   factory SessionInfo.fromJson(Map<String, dynamic> json) {
     return SessionInfo(
@@ -30,7 +32,9 @@ class SessionInfo {
         status: (json["status"] as String?) ?? "",
         taskState: json["taskState"] as String?,
         project: json["project"] as String?,
-        phase: json["phase"] as String?);
+        phase: json["phase"] as String?,
+        completedAlertDismissedAt:
+            json["completedAlertDismissedAt"] as String?);
   }
 }
 
@@ -158,6 +162,16 @@ class GatewayClient {
     );
     if (response.statusCode != 200) {
       throw Exception("重启会话失败 (${response.statusCode})");
+    }
+  }
+
+  Future<void> dismissCompletedAlert(String sessionId) async {
+    final response = await http.post(
+      _uri("/api/sessions/$sessionId/dismiss-alert"),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw Exception("关闭停止通知失败 (${response.statusCode})");
     }
   }
 

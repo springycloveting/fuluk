@@ -23,8 +23,6 @@ class _HomeScreenState extends State<HomeScreen> {
   final AppLinks _appLinks = AppLinks();
   late GatewayClient _client;
   List<SessionInfo> _sessions = [];
-  final Set<String> _activeSeen = {};
-  final List<String> _completedAlerts = [];
   String? _error;
   bool _loading = true;
   final Set<String> _selectedPhases = {"active", "stopped", "closed"};
@@ -88,7 +86,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _socketSub = channel.stream.listen((data) {
         try {
           final event = jsonDecode(data as String) as Map<String, dynamic>;
-          if (event["type"] == "session_task_state_changed") {
+          if (event["type"] == "session_task_state_changed" ||
+              event["type"] == "session_alert_dismissed") {
             _refresh();
           }
         } catch (_) {}
@@ -113,15 +112,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     try {
       final sessions = await _client.listSessions();
-      for (final session in sessions) {
-        if (session.taskState == "in_progress") {
-          _activeSeen.add(session.id);
-        } else if (session.taskState == "completed" &&
-            _activeSeen.remove(session.id) &&
-            !_completedAlerts.contains(session.id)) {
-          _completedAlerts.add(session.id);
-        }
-      }
       sessions.sort((a, b) {
         int rank(SessionInfo s) => s.taskState == "needs_confirmation"
             ? 0
@@ -136,6 +126,22 @@ class _HomeScreenState extends State<HomeScreen> {
     } finally {
       setState(() => _loading = false);
     }
+  }
+
+  List<String> get _completedAlerts => _sessions
+      .where((s) =>
+          s.taskState == "completed" && s.completedAlertDismissedAt == null)
+      .map((s) => s.id)
+      .toList();
+
+  Future<void> _dismissCompletedAlerts() async {
+    final ids = _completedAlerts;
+    for (final id in ids) {
+      try {
+        await _client.dismissCompletedAlert(id);
+      } catch (_) {}
+    }
+    await _refresh();
   }
 
   Future<void> _resolvePrompt(SessionInfo session, bool approve) async {
@@ -429,15 +435,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(width: 10),
                       Expanded(
                           child: Text(
-                              "${_completedAlerts.length} 个会话已完成",
+                              "${_completedAlerts.length} 个会话已停止",
                               style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold))),
                       IconButton(
                           tooltip: "关闭",
-                          onPressed: () =>
-                              setState(() => _completedAlerts.clear()),
+                          onPressed: _dismissCompletedAlerts,
                           icon: const Icon(Icons.close, color: Colors.white)),
                     ]))),
           SizedBox(
