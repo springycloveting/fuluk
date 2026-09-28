@@ -21,7 +21,6 @@ import {
 } from "./session_resume.mjs";
 import { findPrompt, hasConfirmationPrompt } from "./prompt.mjs";
 import { GlassPairingStore } from "./glass_pairing.mjs";
-import { normalizeHookEvent, isHookKind } from "./hooks.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "..", "public");
@@ -242,12 +241,6 @@ async function handleApi(req, res, url, context) {
 
   if (method === "POST" && pathname === "/api/nl") {
     await handleNaturalLanguage(req, res, context);
-    return;
-  }
-
-  if (method === "POST" && pathname.startsWith("/api/hooks/")) {
-    const kind = decodeURIComponent(pathname.slice("/api/hooks/".length));
-    await handleHookIngestion(kind, req, res, context);
     return;
   }
 
@@ -1033,7 +1026,6 @@ async function listSessionsWithTaskState(context) {
   const idleSuppressed =
     previousPollAt !== undefined && now - previousPollAt >= IDLE_OUTPUT_STOPPED_MS;
   const annotated = await annotateSessionsTaskState(sessions, context, { idleSuppressed });
-  await resolvePendingHookEvents(context);
   await dispatchSessionTaskTransitions(annotated, context);
   return annotated;
 }
@@ -1074,7 +1066,6 @@ async function annotateSessionsTaskState(sessions, context, options = {}) {
       idleSuppressed: options.idleSuppressed === true,
       sameScreen: snapshot != null && screenOutputEqual(snapshot.text, output),
       previousTaskState: context.sessionTaskStates?.get(session.id)?.state,
-      hookState: typeof store.getHookState === "function" ? store.getHookState(session.id) : null
     });
     const finalTaskState = applyViewEventGuard(taskState, session, context, {
       screenChanged,
@@ -1104,19 +1095,6 @@ function applyViewEventGuard(taskState, session, context, details) {
 
 function detectTaskState(session, output, snapshot, options = {}) {
   if (session.status !== "running") return "completed";
-  const hookState = options.hookState;
-  if (hookState) {
-    const hookAt = Date.parse(hookState.updatedAt);
-    const activityAt = Date.parse(session.updatedAt);
-    // Input sent through the gateway after the hook fired means the task is
-    // active again even if the CLI has not reported a new event yet.
-    const resumedHere =
-      Number.isFinite(hookAt) &&
-      Number.isFinite(activityAt) &&
-      activityAt > hookAt &&
-      hookState.state !== "in_progress";
-    return resumedHere ? "in_progress" : hookState.state;
-  }
   if (options.captureFailed || options.idleSuppressed) {
     return options.previousTaskState ?? "in_progress";
   }
@@ -1127,80 +1105,6 @@ function detectTaskState(session, output, snapshot, options = {}) {
 
 function screenOutputEqual(previousText, nextText) {
   return String(previousText ?? "").replace(/\s+$/u, "") === String(nextText ?? "").replace(/\s+$/u, "");
-}
-
-async function handleHookIngestion(kind, req, res, context) {
-  const body = await readJsonBody(req);
-  if (!isHookKind(kind)) throw new Error(`unsupported hook kind: ${kind}`);
-  const event = normalizeHookEvent(kind, body);
-  if (!event) {
-    sendJson(res, 200, { ok: true, ignored: true });
-    return;
-  }
-  const session = await applyHookEvent(event, context);
-  if (!session) {
-    sendJson(res, 202, { ok: true, pending: true });
-    return;
-  }
-  sendJson(res, 200, { ok: true, sessionId: session.id, taskState: event.taskState });
-}
-
-async function applyHookEvent(event, context) {
-  const session = resolveHookSession(event, context.store);
-  if (!session) {
-    if (!context.pendingHookEvents) context.pendingHookEvents = [];
-    context.pendingHookEvents.push(event);
-    if (context.pendingHookEvents.length > 100) context.pendingHookEvents.shift();
-    return null;
-  }
-  context.store.upsertHookState(session.id, event.taskState, {
-    at: event.at,
-    eventName: event.eventName,
-    detail: event.detail
-  });
-  const annotatedSession = {
-    ...session,
-    taskState: event.taskState,
-    phase: sessionPhase({ ...session, taskState: event.taskState })
-  };
-  await dispatchSessionTaskTransitions([annotatedSession], context);
-  return session;
-}
-
-function resolveHookSession(event, store) {
-  if (event.cliSessionId) {
-    const direct = store.findByCliSessionId(event.kind, event.cliSessionId);
-    if (direct) return direct;
-  }
-  if (event.cwd) {
-    const byCwd = store.findRunningByCwd(event.kind, event.cwd);
-    if (byCwd) {
-      if (event.cliSessionId && !byCwd.cliSessionId) {
-        store.setCliSessionId(byCwd.id, event.cliSessionId);
-      }
-      return byCwd;
-    }
-  }
-  return null;
-}
-
-async function resolvePendingHookEvents(context) {
-  const pending = context.pendingHookEvents;
-  if (!pending?.length) return;
-  const remaining = [];
-  for (const event of pending) {
-    const session = resolveHookSession(event, context.store);
-    if (!session) {
-      remaining.push(event);
-      continue;
-    }
-    context.store.upsertHookState(session.id, event.taskState, {
-      at: event.at,
-      eventName: event.eventName,
-      detail: event.detail
-    });
-  }
-  context.pendingHookEvents = remaining;
 }
 
 function isOutputIdle(snapshot) {
