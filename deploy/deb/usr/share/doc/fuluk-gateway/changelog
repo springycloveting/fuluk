@@ -1,3 +1,12 @@
+fuluk-gateway (0.2.0) unstable; urgency=medium
+
+  * New mobile gateway watcher and refreshed web UI.
+  * Add configurable working-directory policy for new sessions.
+  * Keep session state detection on terminal output content (approval prompt and
+    idle completion); remove the experimental CLI hook push path.
+
+ -- springycloveting <springycloveting@users.noreply.github.com>  Mon, 28 Sep 2026 00:00:00 -0600
+
 fuluk-gateway (0.1.0) unstable; urgency=medium
 
   * Initial Debian package release.
